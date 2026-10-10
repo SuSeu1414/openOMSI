@@ -1,7 +1,7 @@
 //! Parameter presets per archetype.
 
 use crate::classify::Archetype;
-use crate::generator::{LeafParams, LevelParams, Shape, TreeParams};
+use crate::generator::{LeafParams, LevelParams, Shape, Target, TreeParams};
 
 #[allow(clippy::too_many_arguments)]
 const fn lv(
@@ -38,9 +38,9 @@ const UNUSED: LevelParams = LevelParams {
     ..lv(0.0, 0.0, 1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0)
 };
 
-/// Typical (archetype, height, width) per preset, for tests.
-#[cfg(test)]
-pub(crate) const TARGETS: [(Archetype, f32, f32); 8] = [
+/// Reference (archetype, height, width) per preset: variants are generated at this size
+/// and the renderer scales each instance to its own target.
+pub const TARGETS: [(Archetype, f32, f32); 8] = [
     (Archetype::BroadleafWide, 15.0, 10.0),
     (Archetype::ConiferConical, 20.0, 6.0),
     (Archetype::BroadleafNarrow, 20.0, 5.0),
@@ -50,6 +50,14 @@ pub(crate) const TARGETS: [(Archetype, f32, f32); 8] = [
     (Archetype::Shrub, 3.0, 3.0),
     (Archetype::Hedge, 2.0, 2.0),
 ];
+
+/// The reference size of `a`'s preset.
+pub fn reference_target(a: Archetype) -> Option<Target> {
+    TARGETS
+        .iter()
+        .find(|t| t.0 == a)
+        .map(|&(_, height, width)| Target { height, width })
+}
 
 /// `None` for archetypes without a generator preset.
 pub fn preset(a: Archetype) -> Option<TreeParams> {

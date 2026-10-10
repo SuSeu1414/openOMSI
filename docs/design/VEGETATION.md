@@ -250,7 +250,7 @@ Key takeaways:
 
 * **NEW `crates/omsi-vegetation`** (layer 1: pure data, no GPU, no clock). Modules:
   `classify` (signals -> `Archetype` + `confidence: f32`), `overrides` (parser of
-  `Vegetation/*.cfg`), `seed`, `gen` (skeleton, meshes, LODs), `cache` (keys and
+  `Vegetation/*.cfg`), `seed`, `generator` (skeleton, meshes, LODs), `cache` (keys and
   (de)serialisation of meshes), `presets`, `tex` (procedural bark and leaf textures as RGBA
   buffers). Depends on `omsi-cfg`, `omsi-scenery`, `glam`, `rayon`; nothing else new.
 * **`omsi-texture`:** coverage-preserving mip generation, a new function next to
@@ -342,8 +342,8 @@ branches, asymmetry from the seed.
   `unorm8x4`.
 * **Variants:** 8 per archetype per quality level, shared by all instances (random yaw,
   scale and tint on top), generated on the rayon pool when a tile that needs them streams
-  in. Cache: `~/.openomsi/cache/vegetation/v<GEN_VERSION>/<archetype>-<variant>-<quality>.bin`;
-  the key is the generator version + preset hash + seed. Typical cost 30-80 ms per variant
+  in. Cache: `<root>/v<GEN_VERSION>/<Archetype>-<variant>-<LOD>-<preset hash>.bin`, with the root
+  passed in by the app; the seed derives from archetype and variant only. Typical cost 30-80 ms per variant
   on one core; at most about 64 variants per map.
 * **LOD chain** (triangles, broadleaf):
 

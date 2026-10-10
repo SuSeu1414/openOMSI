@@ -11,7 +11,7 @@ use super::skeleton::{sample, skeleton, stem_length, Skeleton, Stem, Target};
 use super::tube::{tubes, TubeOptions};
 use crate::seed::unit;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Lod {
     L0,
     L1,
