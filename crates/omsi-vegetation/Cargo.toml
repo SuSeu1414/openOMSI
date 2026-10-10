@@ -8,3 +8,6 @@ description = "Vegetation: classification of map trees, seeds, procedural tree g
 [dependencies]
 omsi-cfg = { path = "../omsi-cfg" }
 glam.workspace = true
+
+[dev-dependencies]
+image.workspace = true
