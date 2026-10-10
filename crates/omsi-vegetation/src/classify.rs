@@ -81,21 +81,76 @@ impl Class {
 }
 
 // the word lists of the game's `vegetation_give_of` (omsi-app, scene/terrain_paint.rs)
-pub const PLANT_GROUP_WORDS: [&str; 17] = ["tree", "baum", "bäume", "baeume", "deciduous", "conifer", "shrub", "bush", "busch", "strauch", "hecke", "hedge", "plant", "pflanz", "arbor", "vegetation", "forest"];
-pub const PLANT_NAME_WORDS: [&str; 15] = ["tree", "trees", "baum", "shrub", "shrubbery", "bush", "busch", "strauch", "hecke", "hedge", "arbor", "chestnut", "kastanie", "palm", "plant"];
+pub const PLANT_GROUP_WORDS: [&str; 17] = [
+    "tree",
+    "baum",
+    "bäume",
+    "baeume",
+    "deciduous",
+    "conifer",
+    "shrub",
+    "bush",
+    "busch",
+    "strauch",
+    "hecke",
+    "hedge",
+    "plant",
+    "pflanz",
+    "arbor",
+    "vegetation",
+    "forest",
+];
+pub const PLANT_NAME_WORDS: [&str; 15] = [
+    "tree",
+    "trees",
+    "baum",
+    "shrub",
+    "shrubbery",
+    "bush",
+    "busch",
+    "strauch",
+    "hecke",
+    "hedge",
+    "arbor",
+    "chestnut",
+    "kastanie",
+    "palm",
+    "plant",
+];
 
 /// A plant model: with groups, any group word starts with a group word; without, a word of
 /// the file stem is a name word. `stem`: file stem, any case.
 pub fn is_plant(groups: &[String], stem: &str) -> bool {
-    let groups: Vec<String> = groups.iter().map(|g| g.trim().to_lowercase()).filter(|g| !g.is_empty()).collect();
+    let groups: Vec<String> = groups
+        .iter()
+        .map(|g| g.trim().to_lowercase())
+        .filter(|g| !g.is_empty())
+        .collect();
     if groups.is_empty() {
-        stem.to_lowercase().split(|c: char| !c.is_alphabetic()).any(|w| PLANT_NAME_WORDS.contains(&w))
+        stem.to_lowercase()
+            .split(|c: char| !c.is_alphabetic())
+            .any(|w| PLANT_NAME_WORDS.contains(&w))
     } else {
-        groups.iter().any(|g| g.split(|c: char| !c.is_alphabetic()).any(|word| PLANT_GROUP_WORDS.iter().any(|w| word.starts_with(w))))
+        groups.iter().any(|g| {
+            g.split(|c: char| !c.is_alphabetic())
+                .any(|word| PLANT_GROUP_WORDS.iter().any(|w| word.starts_with(w)))
+        })
     }
 }
 
-const GROUND_COVER: [&str; 11] = ["gras", "gestruepp", "blume", "farn", "fern", "unkraut", "flower", "weed", "moos", "schilf", "bodendecker"];
+const GROUND_COVER: [&str; 11] = [
+    "gras",
+    "gestruepp",
+    "blume",
+    "farn",
+    "fern",
+    "unkraut",
+    "flower",
+    "weed",
+    "moos",
+    "schilf",
+    "bodendecker",
+];
 
 use Archetype as A;
 
@@ -149,7 +204,9 @@ pub fn is_known_species(s: &str) -> bool {
 
 /// The table's species name equal to `s`, ASCII case-insensitive.
 pub fn species_static(s: &str) -> Option<&'static str> {
-    SPECIES.iter().find_map(|(_, _, sp)| sp.filter(|sp| sp.eq_ignore_ascii_case(s)))
+    SPECIES
+        .iter()
+        .find_map(|(_, _, sp)| sp.filter(|sp| sp.eq_ignore_ascii_case(s)))
 }
 
 /// Lowercase words of `s`: umlauts spelled out, everything non-alphabetic separates.
@@ -164,7 +221,10 @@ fn norm(s: &str) -> Vec<String> {
             c => t.push(c),
         }
     }
-    t.split(|c: char| !c.is_ascii_alphabetic()).filter(|w| !w.is_empty()).map(str::to_string).collect()
+    t.split(|c: char| !c.is_ascii_alphabetic())
+        .filter(|w| !w.is_empty())
+        .map(str::to_string)
+        .collect()
 }
 
 fn stem(path: &str) -> &str {
@@ -181,15 +241,31 @@ fn matches(word: &str, key: &str) -> bool {
 }
 
 pub fn classify(s: &Signals) -> Class {
-    let none = Class { archetype: Archetype::None, species: None, confidence: 0.0 };
-    let sources = [norm(s.texture.map(stem).unwrap_or("")), norm(stem(s.sco_path)), norm(&s.groups.join(" "))];
-    if sources.iter().flatten().any(|w| GROUND_COVER.iter().any(|k| matches(w, k))) {
+    let none = Class {
+        archetype: Archetype::None,
+        species: None,
+        confidence: 0.0,
+    };
+    let sources = [
+        norm(s.texture.map(stem).unwrap_or("")),
+        norm(stem(s.sco_path)),
+        norm(&s.groups.join(" ")),
+    ];
+    if sources
+        .iter()
+        .flatten()
+        .any(|w| GROUND_COVER.iter().any(|k| matches(w, k)))
+    {
         return none;
     }
     if s.height.is_some_and(|h| h < 2.0) {
         return none;
     }
-    let species = sources.iter().find_map(|words| SPECIES.iter().find(|(k, ..)| words.iter().any(|w| matches(w, k))));
+    let species = sources.iter().find_map(|words| {
+        SPECIES
+            .iter()
+            .find(|(k, ..)| words.iter().any(|w| matches(w, k)))
+    });
     let plant = is_plant(s.groups, stem(s.sco_path));
     let mut conf = 0.0;
     if s.tree_section {
@@ -209,16 +285,28 @@ pub fn classify(s: &Signals) -> Class {
         return none;
     }
     let mut archetype = species.map_or(Archetype::BroadleafWide, |e| e.1);
-    if s.height.is_some_and(|h| h < 3.0) && matches!(archetype, Archetype::BroadleafWide | Archetype::BroadleafNarrow | Archetype::Birch | Archetype::Willow) {
+    if s.height.is_some_and(|h| h < 3.0)
+        && matches!(
+            archetype,
+            Archetype::BroadleafWide
+                | Archetype::BroadleafNarrow
+                | Archetype::Birch
+                | Archetype::Willow
+        )
+    {
         archetype = Archetype::Shrub;
     }
-    Class { archetype, species: species.and_then(|e| e.2), confidence }
+    Class {
+        archetype,
+        species: species.and_then(|e| e.2),
+        confidence,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use Archetype::{BroadleafNarrow, BroadleafWide, Birch, ConiferConical, Pine, Shrub, Willow};
+    use Archetype::{Birch, BroadleafNarrow, BroadleafWide, ConiferConical, Pine, Shrub, Willow};
 
     const D: &str = "Sceneryobjects\\Trees_MC\\";
 
@@ -229,47 +317,224 @@ mod tests {
     }
 
     /// (tree_section, path, groups, texture, height) -> (archetype, species, confidence)
-    type Row = (bool, String, Vec<String>, Option<&'static str>, Option<f32>, Archetype, Option<&'static str>, Option<f32>);
+    type Row = (
+        bool,
+        String,
+        Vec<String>,
+        Option<&'static str>,
+        Option<f32>,
+        Archetype,
+        Option<&'static str>,
+        Option<f32>,
+    );
 
     fn rows() -> Vec<Row> {
         let g = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         let p = |f: &str| format!("{D}{f}");
         vec![
-            (true, p("tree_medium_04.sco"), g(&[]), Some("kastanie01.tga"), Some(14.35), BroadleafWide, Some("chestnut"), Some(1.0)),
-            (true, p("Birke01.sco"), g(&[]), Some("Birke01.dds"), Some(15.5), Birch, Some("birch"), Some(0.9)),
-            (true, p("tree_medium_02.sco"), g(&[]), Some("tree_medium_02.tga"), Some(12.0), BroadleafWide, None, Some(0.8)),
-            (true, p("Blumen_rosa_1.sco"), g(&[]), Some("blumen_rosa.tga"), Some(1.0), A::None, None, Some(0.0)),
-            (true, p("Bodengestruepp03.sco"), g(&[]), Some("x.tga"), Some(4.0), A::None, None, Some(0.0)),
-            (true, p("Ebereschengestruepp.sco"), g(&[]), None, None, A::None, None, Some(0.0)),
-            (true, p("Trauerweide.sco"), g(&[]), Some("trauerweide.tga"), Some(10.0), Willow, Some("willow"), None),
-            (true, p("x.sco"), g(&[]), Some("Schwarzkiefer.tga"), Some(18.0), Pine, Some("pine"), Some(0.9)),
-            (true, p("Pappel01.sco"), g(&[]), Some("Pappel01.tga"), Some(25.0), BroadleafNarrow, Some("poplar"), None),
-            (true, p("Fichte_gross.sco"), g(&[]), None, None, ConiferConical, Some("spruce"), None),
-            (false, "Sceneryobjects\\Ruede\\trees_chestnut01.sco".into(), g(&[]), None, None, BroadleafWide, Some("chestnut"), Some(0.5)),
-            (false, p("shrubbery_03_20.sco"), g(&[]), None, Some(1.5), A::None, None, Some(0.0)),
-            (false, p("shrubbery_03_20.sco"), g(&[]), None, Some(2.5), Shrub, Some("shrub"), Some(0.5)),
-            (false, p("Laterne01.sco"), g(&["German Street Side"]), None, None, A::None, None, Some(0.0)),
-            (true, p("x.sco"), g(&[]), Some("x.tga"), Some(2.5), Shrub, None, Some(0.5)),
-            (true, p("Rotbuche.sco"), g(&["Bäume Laubbäume"]), Some("rotbuche.tga"), Some(20.0), BroadleafWide, Some("beech"), Some(1.0)),
+            (
+                true,
+                p("tree_medium_04.sco"),
+                g(&[]),
+                Some("kastanie01.tga"),
+                Some(14.35),
+                BroadleafWide,
+                Some("chestnut"),
+                Some(1.0),
+            ),
+            (
+                true,
+                p("Birke01.sco"),
+                g(&[]),
+                Some("Birke01.dds"),
+                Some(15.5),
+                Birch,
+                Some("birch"),
+                Some(0.9),
+            ),
+            (
+                true,
+                p("tree_medium_02.sco"),
+                g(&[]),
+                Some("tree_medium_02.tga"),
+                Some(12.0),
+                BroadleafWide,
+                None,
+                Some(0.8),
+            ),
+            (
+                true,
+                p("Blumen_rosa_1.sco"),
+                g(&[]),
+                Some("blumen_rosa.tga"),
+                Some(1.0),
+                A::None,
+                None,
+                Some(0.0),
+            ),
+            (
+                true,
+                p("Bodengestruepp03.sco"),
+                g(&[]),
+                Some("x.tga"),
+                Some(4.0),
+                A::None,
+                None,
+                Some(0.0),
+            ),
+            (
+                true,
+                p("Ebereschengestruepp.sco"),
+                g(&[]),
+                None,
+                None,
+                A::None,
+                None,
+                Some(0.0),
+            ),
+            (
+                true,
+                p("Trauerweide.sco"),
+                g(&[]),
+                Some("trauerweide.tga"),
+                Some(10.0),
+                Willow,
+                Some("willow"),
+                None,
+            ),
+            (
+                true,
+                p("x.sco"),
+                g(&[]),
+                Some("Schwarzkiefer.tga"),
+                Some(18.0),
+                Pine,
+                Some("pine"),
+                Some(0.9),
+            ),
+            (
+                true,
+                p("Pappel01.sco"),
+                g(&[]),
+                Some("Pappel01.tga"),
+                Some(25.0),
+                BroadleafNarrow,
+                Some("poplar"),
+                None,
+            ),
+            (
+                true,
+                p("Fichte_gross.sco"),
+                g(&[]),
+                None,
+                None,
+                ConiferConical,
+                Some("spruce"),
+                None,
+            ),
+            (
+                false,
+                "Sceneryobjects\\Ruede\\trees_chestnut01.sco".into(),
+                g(&[]),
+                None,
+                None,
+                BroadleafWide,
+                Some("chestnut"),
+                Some(0.5),
+            ),
+            (
+                false,
+                p("shrubbery_03_20.sco"),
+                g(&[]),
+                None,
+                Some(1.5),
+                A::None,
+                None,
+                Some(0.0),
+            ),
+            (
+                false,
+                p("shrubbery_03_20.sco"),
+                g(&[]),
+                None,
+                Some(2.5),
+                Shrub,
+                Some("shrub"),
+                Some(0.5),
+            ),
+            (
+                false,
+                p("Laterne01.sco"),
+                g(&["German Street Side"]),
+                None,
+                None,
+                A::None,
+                None,
+                Some(0.0),
+            ),
+            (
+                true,
+                p("x.sco"),
+                g(&[]),
+                Some("x.tga"),
+                Some(2.5),
+                Shrub,
+                None,
+                Some(0.5),
+            ),
+            (
+                true,
+                p("Rotbuche.sco"),
+                g(&["Bäume Laubbäume"]),
+                Some("rotbuche.tga"),
+                Some(20.0),
+                BroadleafWide,
+                Some("beech"),
+                Some(1.0),
+            ),
         ]
     }
 
     #[test]
     fn table() {
-        for (i, (tree, path, groups, tex, h, arch, species, conf)) in rows().into_iter().enumerate() {
-            let c = classify(&Signals { tree_section: tree, sco_path: &path, groups: &groups, texture: tex, height: h });
+        for (i, (tree, path, groups, tex, h, arch, species, conf)) in rows().into_iter().enumerate()
+        {
+            let c = classify(&Signals {
+                tree_section: tree,
+                sco_path: &path,
+                groups: &groups,
+                texture: tex,
+                height: h,
+            });
             assert_eq!((c.archetype, c.species), (arch, species), "row {}", i + 1);
             if let Some(x) = conf {
-                assert!((c.confidence - x).abs() < 1e-6, "row {}: {}", i + 1, c.confidence);
+                assert!(
+                    (c.confidence - x).abs() < 1e-6,
+                    "row {}: {}",
+                    i + 1,
+                    c.confidence
+                );
             }
         }
     }
 
     #[test]
     fn replace_geometry_threshold() {
-        let c = classify(&Signals { tree_section: false, sco_path: "a\\trees_chestnut01.sco", groups: &[], texture: None, height: None });
+        let c = classify(&Signals {
+            tree_section: false,
+            sco_path: "a\\trees_chestnut01.sco",
+            groups: &[],
+            texture: None,
+            height: None,
+        });
         assert!(!c.replace_geometry());
-        let c = classify(&Signals { tree_section: true, sco_path: "a\\x.sco", groups: &[], texture: Some("kastanie.tga"), height: Some(10.0) });
+        let c = classify(&Signals {
+            tree_section: true,
+            sco_path: "a\\x.sco",
+            groups: &[],
+            texture: Some("kastanie.tga"),
+            height: Some(10.0),
+        });
         assert!(c.replace_geometry());
     }
 

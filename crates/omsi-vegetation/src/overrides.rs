@@ -81,7 +81,13 @@ impl Overrides {
                 warnings.push(format!("{origin}: unknown species '{sp}'"));
                 continue;
             };
-            self.rules.push(Rule { target, pattern: pat.to_string(), archetype, species, origin });
+            self.rules.push(Rule {
+                target,
+                pattern: pat.to_string(),
+                archetype,
+                species,
+                origin,
+            });
         }
         warnings
     }
@@ -103,15 +109,34 @@ impl Overrides {
 pub fn classify_with<'r>(o: &'r Overrides, s: &Signals) -> (Class, Option<&'r Rule>) {
     match o.find(s.sco_path, s.texture) {
         Some(r) => {
-            let confidence = if r.archetype == Archetype::None { 0.0 } else { 1.0 };
-            (Class { archetype: r.archetype, species: r.species.as_deref().and_then(species_static), confidence }, Some(r))
+            let confidence = if r.archetype == Archetype::None {
+                0.0
+            } else {
+                1.0
+            };
+            (
+                Class {
+                    archetype: r.archetype,
+                    species: r.species.as_deref().and_then(species_static),
+                    confidence,
+                },
+                Some(r),
+            )
         }
         None => (classify(s), None),
     }
 }
 
 fn norm(s: &str) -> Vec<char> {
-    s.chars().map(|c| if c == '/' { '\\' } else { c.to_ascii_lowercase() }).collect()
+    s.chars()
+        .map(|c| {
+            if c == '/' {
+                '\\'
+            } else {
+                c.to_ascii_lowercase()
+            }
+        })
+        .collect()
 }
 
 /// `*` = any run of characters (separators included), `?` = one character; ASCII
@@ -148,8 +173,14 @@ mod tests {
     #[test]
     fn glob() {
         let g = glob_match;
-        assert!(g("*\\tree_medium_0*.sco", "Sceneryobjects\\Trees_MC\\tree_medium_04.sco"));
-        assert!(g("*/tree_medium_0*.sco", "Sceneryobjects\\Trees_MC\\tree_medium_04.sco"));
+        assert!(g(
+            "*\\tree_medium_0*.sco",
+            "Sceneryobjects\\Trees_MC\\tree_medium_04.sco"
+        ));
+        assert!(g(
+            "*/tree_medium_0*.sco",
+            "Sceneryobjects\\Trees_MC\\tree_medium_04.sco"
+        ));
         assert!(g("TREE_MEDIUM_04.SCO", "tree_medium_04.sco"));
         assert!(g("tree_?.sco", "tree_1.sco"));
         assert!(!g("tree_?.sco", "tree_12.sco"));
@@ -166,8 +197,14 @@ mod tests {
         assert!(w.is_empty());
         assert_eq!(o.rules.len(), 2);
         let (a, b) = (&o.rules[0], &o.rules[1]);
-        assert_eq!((a.target, a.archetype, a.species.as_deref()), (Target::Sco, Archetype::BroadleafWide, Some("linden")));
-        assert_eq!((b.target, b.archetype, b.species.as_deref()), (Target::Texture, Archetype::None, None));
+        assert_eq!(
+            (a.target, a.archetype, a.species.as_deref()),
+            (Target::Sco, Archetype::BroadleafWide, Some("linden"))
+        );
+        assert_eq!(
+            (b.target, b.archetype, b.species.as_deref()),
+            (Target::Texture, Archetype::None, None)
+        );
         assert_eq!(b.pattern, "Blumen*.tga");
         assert!(a.origin.ends_with(":1") && b.origin.ends_with(":7"));
     }
@@ -188,13 +225,16 @@ mod tests {
     #[test]
     fn parse_truncated_rule() {
         let mut o = Overrides::default();
-        let w = o.parse_append(Path::new("a.cfg"), "[rule]
+        let w = o.parse_append(
+            Path::new("a.cfg"),
+            "[rule]
 sco
 [rule]
 texture
 x*.tga
 none
--");
+-",
+        );
         assert_eq!(o.rules.len(), 1);
         assert_eq!(o.rules[0].target, Target::Texture);
         assert_eq!(w.len(), 1);
@@ -204,7 +244,10 @@ none
     #[test]
     fn parse_ignores_other_blocks() {
         let mut o = Overrides::default();
-        let w = o.parse_append(Path::new("a.cfg"), &format!("comment\n[other]\nx\n{EXAMPLE}trailing text\n"));
+        let w = o.parse_append(
+            Path::new("a.cfg"),
+            &format!("comment\n[other]\nx\n{EXAMPLE}trailing text\n"),
+        );
         assert!(w.is_empty());
         assert_eq!(o.rules.len(), 2);
     }
@@ -212,24 +255,43 @@ none
     #[test]
     fn find_rules() {
         let mut o = Overrides::default();
-        o.parse_append(Path::new("a.cfg"), "[rule]\ntexture\nBlumen*.tga\nnone\n-\n");
-        o.parse_append(Path::new("b.cfg"), "[rule]\ntexture\n*.tga\nshrub\n-\n[rule]\nsco\n*.sco\npine\npine\n");
-        let r = o.find("x.sco", Some("Texture\\Trees\\Blumen_rosa.tga")).unwrap();
+        o.parse_append(
+            Path::new("a.cfg"),
+            "[rule]\ntexture\nBlumen*.tga\nnone\n-\n",
+        );
+        o.parse_append(
+            Path::new("b.cfg"),
+            "[rule]\ntexture\n*.tga\nshrub\n-\n[rule]\nsco\n*.sco\npine\npine\n",
+        );
+        let r = o
+            .find("x.sco", Some("Texture\\Trees\\Blumen_rosa.tga"))
+            .unwrap();
         assert_eq!(r.archetype, Archetype::None);
-        assert_eq!(o.find("x.sco", Some("other.tga")).unwrap().archetype, Archetype::Shrub);
+        assert_eq!(
+            o.find("x.sco", Some("other.tga")).unwrap().archetype,
+            Archetype::Shrub
+        );
         assert_eq!(o.find("x.sco", None).unwrap().archetype, Archetype::Pine);
         assert!(o.find("x.txt", None).is_none());
     }
 
     #[test]
     fn classify_with_rules() {
-        let sig = |sco| Signals { tree_section: true, sco_path: sco, groups: &[], texture: Some("Birke01.dds"), height: Some(15.0) };
+        let sig = |sco| Signals {
+            tree_section: true,
+            sco_path: sco,
+            groups: &[],
+            texture: Some("Birke01.dds"),
+            height: Some(15.0),
+        };
         let mut o = Overrides::default();
         let (plain, rule) = classify_with(&o, &sig("a/x.sco"));
         assert!(rule.is_none());
         assert_eq!(plain, classify(&sig("a/x.sco")));
         assert_eq!(plain.archetype, Archetype::Birch);
-        o.parse_append(Path::new("a.cfg"), "[rule]
+        o.parse_append(
+            Path::new("a.cfg"),
+            "[rule]
 sco
 */x.sco
 pine
@@ -239,9 +301,13 @@ sco
 */y.sco
 none
 -
-");
+",
+        );
         let (c, r) = classify_with(&o, &sig("a/x.sco"));
-        assert_eq!((c.archetype, c.species, c.confidence), (Archetype::Pine, Some("pine"), 1.0));
+        assert_eq!(
+            (c.archetype, c.species, c.confidence),
+            (Archetype::Pine, Some("pine"), 1.0)
+        );
         assert!(c.replace_geometry() && r.is_some());
         let (c, _) = classify_with(&o, &sig("a/y.sco"));
         assert!(!c.replace_geometry());
