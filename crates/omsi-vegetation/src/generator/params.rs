@@ -111,4 +111,8 @@ pub struct TreeParams {
     pub fork_height: f32,
     /// Degrees from the trunk axis, max.
     pub fork_angle: f32,
+    /// Leader length as a fraction of the straight run to the top.
+    pub leader_length: f32,
+    /// Tropism of fork leaders (level 0 with a parent), like `attraction_up`.
+    pub leader_up: f32,
 }

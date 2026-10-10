@@ -93,8 +93,14 @@ impl Ctx<'_> {
                 };
                 a += c.signed() * lp.curve_v / segs as f32;
                 q *= Quat::from_rotation_x(a.to_radians());
-                if n >= 2 && self.p.attraction_up != 0.0 {
-                    q = tropism(q, self.p.attraction_up / segs as f32);
+                let leader = n == 0 && parent.is_some();
+                if (n >= 2 && self.p.attraction_up != 0.0) || (leader && self.p.leader_up != 0.0) {
+                    let up = if n == 0 {
+                        self.p.leader_up
+                    } else {
+                        self.p.attraction_up
+                    };
+                    q = tropism(q, up / segs as f32);
                 }
             }
             q = q.normalize();
@@ -191,7 +197,7 @@ pub fn skeleton(p: &TreeParams, target: Target, seed: u64) -> Skeleton {
         for j in 0..forks {
             let phi = phi0 + j as f32 * 360.0 / forks as f32 + r.signed() * 20.0;
             let ang_r = p.fork_angle * (0.75 + 0.25 * r.unit());
-            let u = 0.92 + 0.08 * r.unit();
+            let u = p.leader_length * (0.92 + 0.08 * r.unit());
             let len = (h - tip.z) / ang_r.to_radians().cos() * u;
             let ang = ang_r.min((0.35 * w / len).clamp(0.0, 1.0).asin().to_degrees());
             let mut len = (h - tip.z) / ang.to_radians().cos() * u;
@@ -206,6 +212,13 @@ pub fn skeleton(p: &TreeParams, target: Target, seed: u64) -> Skeleton {
                     break;
                 }
                 len *= (h - tip.z) / (top - tip.z) * 0.999;
+                s = cx.grow(0, tip, frame, len, rl, Some(0), 1.0, idx, 1.0);
+            }
+            for _ in 0..8 {
+                if s.points[1..].iter().all(|&q| inside(q)) {
+                    break;
+                }
+                len *= 0.85;
                 s = cx.grow(0, tip, frame, len, rl, Some(0), 1.0, idx, 1.0);
             }
             stems.push(s);
@@ -334,13 +347,20 @@ mod tests {
     use super::*;
     use crate::classify::Archetype;
     use crate::generator::Shape;
-    use crate::presets::preset;
+    use crate::presets::{preset, TARGETS};
 
     fn both() -> [TreeParams; 2] {
         [
             preset(Archetype::BroadleafWide).unwrap(),
             preset(Archetype::ConiferConical).unwrap(),
         ]
+    }
+
+    fn all() -> Vec<(Archetype, TreeParams, Target)> {
+        TARGETS
+            .iter()
+            .map(|&(a, height, width)| (a, preset(a).unwrap(), Target { height, width }))
+            .collect()
     }
 
     fn digest(s: &Skeleton) -> u64 {
@@ -365,8 +385,8 @@ mod tests {
 
     #[test]
     fn same_seed_same_skeleton() {
-        for p in both() {
-            let (a, b) = (skeleton(&p, T, 42), skeleton(&p, T, 42));
+        for (_, p, t) in all() {
+            let (a, b) = (skeleton(&p, t, 42), skeleton(&p, t, 42));
             assert_eq!(a, b);
             assert_eq!(digest(&a), digest(&b));
         }
@@ -374,15 +394,21 @@ mod tests {
 
     #[test]
     fn other_seed_other_skeleton() {
-        for p in both() {
-            assert_ne!(digest(&skeleton(&p, T, 1)), digest(&skeleton(&p, T, 2)));
+        for (_, p, t) in all() {
+            assert_ne!(digest(&skeleton(&p, t, 1)), digest(&skeleton(&p, t, 2)));
         }
     }
 
     #[test]
     fn fits_the_target_box() {
-        for p in both() {
-            for (height, width) in [(15.0, 10.0), (8.0, 3.0), (25.0, 20.0)] {
+        for (a, p, t) in all() {
+            let extra: &[(f32, f32)] = match a {
+                Archetype::BroadleafWide | Archetype::ConiferConical => {
+                    &[(15.0, 10.0), (8.0, 3.0), (25.0, 20.0)]
+                }
+                _ => &[],
+            };
+            for (height, width) in extra.iter().copied().chain([(t.height, t.width)]) {
                 for seed in 0..8 {
                     let sk = skeleton(&p, Target { height, width }, seed);
                     for s in sk.stems.iter().filter(|s| s.level >= 1) {
@@ -398,11 +424,17 @@ mod tests {
                     for v in l0().flat_map(|s| &s.points) {
                         assert!(v.z <= height + 1e-3, "level-0 z {} > {height}", v.z);
                     }
-                    let top = l0()
+                    let top = sk
+                        .stems
+                        .iter()
                         .flat_map(|s| &s.points)
                         .map(|v| v.z)
                         .fold(f32::MIN, f32::max);
-                    assert!((0.9 * height..=1.0001 * height).contains(&top), "top {top}");
+                    // Sanity bound only: the renderer fits each variant bbox to the target (PR 9).
+                    assert!(
+                        (0.85 * height..=1.0001 * height).contains(&top),
+                        "{a:?} {height}x{width} seed {seed} top {top}"
+                    );
                 }
             }
         }
@@ -410,8 +442,14 @@ mod tests {
 
     #[test]
     fn structure_is_sane() {
-        for p in both() {
-            let sk = skeleton(&p, T, 7);
+        for (a, p, t) in all() {
+            let sk = skeleton(&p, t, 7);
+            let n1 = sk.stems.iter().filter(|s| s.level == 1).count();
+            assert!(
+                n1 >= 5 && sk.stems.len() <= 2000,
+                "{a:?}: {n1} / {}",
+                sk.stems.len()
+            );
             for (i, s) in sk.stems.iter().enumerate() {
                 let n = p.level[s.level as usize].curve_res as usize + 1;
                 assert_eq!((s.points.len(), s.radii.len(), s.frames.len()), (n, n, n));
@@ -469,26 +507,43 @@ mod tests {
 
     #[test]
     fn leaders_stay_narrow() {
+        for (a, p, t) in all().into_iter().filter(|x| x.1.trunk_forks >= 2) {
+            let small = if t.height < 5.0 {
+                (2.0, 1.2)
+            } else {
+                (8.0, 3.0)
+            };
+            for (height, width) in [(t.height, t.width), small] {
+                for seed in 0..8 {
+                    let sk = skeleton(&p, Target { height, width }, seed);
+                    let lim = width / 2.0 + width * p.asymmetry / 2.0 + 1e-3;
+                    for s in sk
+                        .stems
+                        .iter()
+                        .filter(|s| s.level == 0 && s.parent.is_some())
+                    {
+                        for v in &s.points {
+                            let d = v.truncate().length();
+                            assert!(d <= lim, "{a:?} seed {seed} {height}x{width}: {d} > {lim}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn leaders_arc_upwards() {
         let [b, _] = both();
-        let (height, width) = (8.0, 3.0);
         for seed in 0..8 {
-            let sk = skeleton(&b, Target { height, width }, seed);
-            let lim = 0.35 * width
-                + height * b.trunk_lean.to_radians().sin()
-                + (height - b.fork_height * height) * b.level[0].curve_v.to_radians().sin()
-                + 1e-3;
-            for v in sk
+            let sk = skeleton(&b, T, seed);
+            for s in sk
                 .stems
                 .iter()
-                .filter(|s| s.level == 0)
-                .flat_map(|s| &s.points)
+                .filter(|s| s.level == 0 && s.parent.is_some())
             {
-                assert!(
-                    v.truncate().length() <= lim,
-                    "seed {seed} {} > {lim} tip {:?}",
-                    v.truncate().length(),
-                    sk.stems[0].points.last()
-                );
+                let z = |q: &Quat| (*q * Vec3::Z).z;
+                assert!(z(s.frames.last().unwrap()) > z(&s.frames[0]), "seed {seed}");
             }
         }
     }
@@ -517,7 +572,7 @@ mod tests {
             height: 20.0,
             width: 6.0,
         };
-        for (p, t, want) in [(&b, T, [4, 38, 302, 0]), (&c, tc, [1, 62, 363, 0])] {
+        for (p, t, want) in [(&b, T, [4, 40, 295, 0]), (&c, tc, [1, 62, 363, 0])] {
             let sk = skeleton(p, t, 42);
             let mut bare = sk.clone();
             bare.flare = None;

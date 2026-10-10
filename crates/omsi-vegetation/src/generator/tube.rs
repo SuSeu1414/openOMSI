@@ -310,6 +310,14 @@ mod tests {
             assert!(a <= 25_000);
             assert!(b < a);
         }
+        let mut over = false;
+        for (a, height, width) in crate::presets::TARGETS {
+            let sk = skeleton(&preset(a).unwrap(), Target { height, width }, 42);
+            let n = tubes(&sk, &TubeOptions::default()).triangles();
+            eprintln!("budget {a:?}: {n}");
+            over |= n > 25_000;
+        }
+        assert!(!over);
     }
 
     const BW: Target = Target {

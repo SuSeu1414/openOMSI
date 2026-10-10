@@ -38,6 +38,19 @@ const UNUSED: LevelParams = LevelParams {
     ..lv(0.0, 0.0, 1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0)
 };
 
+/// Typical (archetype, height, width) per preset, for tests.
+#[cfg(test)]
+pub(crate) const TARGETS: [(Archetype, f32, f32); 8] = [
+    (Archetype::BroadleafWide, 15.0, 10.0),
+    (Archetype::ConiferConical, 20.0, 6.0),
+    (Archetype::BroadleafNarrow, 20.0, 5.0),
+    (Archetype::Pine, 18.0, 8.0),
+    (Archetype::Willow, 10.0, 10.0),
+    (Archetype::Birch, 14.0, 6.0),
+    (Archetype::Shrub, 3.0, 3.0),
+    (Archetype::Hedge, 2.0, 2.0),
+];
+
 /// `None` for archetypes without a generator preset.
 pub fn preset(a: Archetype) -> Option<TreeParams> {
     match a {
@@ -48,7 +61,7 @@ pub fn preset(a: Archetype) -> Option<TreeParams> {
             level: [
                 lv(1.0, 0.0, 8, 0.0, 0.0, 20.0, 0.0, 0.0, 0.0, 0.0, 0),
                 lv(
-                    0.50, 0.08, 6, -30.0, 0.0, 40.0, 45.0, -20.0, 137.5, 15.0, 36,
+                    0.50, 0.08, 6, -15.0, 0.0, 40.0, 55.0, -20.0, 137.5, 15.0, 36,
                 ),
                 lv(0.40, 0.10, 4, -10.0, 0.0, 60.0, 45.0, 15.0, 137.5, 25.0, 14),
                 UNUSED,
@@ -68,6 +81,8 @@ pub fn preset(a: Archetype) -> Option<TreeParams> {
             trunk_forks: 3,
             fork_height: 0.45,
             fork_angle: 28.0,
+            leader_length: 0.85,
+            leader_up: 0.6,
         }),
         // Spruce / fir: excurrent.
         Archetype::ConiferConical => Some(TreeParams {
@@ -96,8 +111,174 @@ pub fn preset(a: Archetype) -> Option<TreeParams> {
             trunk_forks: 0,
             fork_height: 0.0,
             fork_angle: 0.0,
+            leader_length: 1.0,
+            leader_up: 0.0,
         }),
-        _ => None,
+        Archetype::BroadleafNarrow => Some(TreeParams {
+            shape: Shape::Cylindrical,
+            levels: 3,
+            level: [
+                lv(1.0, 0.0, 10, 0.0, 0.0, 8.0, 0.0, 0.0, 0.0, 0.0, 0),
+                lv(0.35, 0.06, 5, -40.0, 0.0, 20.0, 30.0, 10.0, 137.5, 15.0, 50),
+                lv(0.35, 0.1, 3, -10.0, 0.0, 30.0, 30.0, 10.0, 137.5, 30.0, 8),
+                UNUSED,
+            ],
+            base_size: 0.08,
+            ratio: 0.016,
+            ratio_power: 1.0,
+            flare: 0.4,
+            attraction_up: 0.8,
+            crown_ratio: 0.25,
+            prune_peak: 0.6,
+            prune_power_low: 0.7,
+            prune_power_high: 0.4,
+            dead_branches: 0.1,
+            trunk_lean: 2.0,
+            asymmetry: 0.05,
+            trunk_forks: 0,
+            fork_height: 0.0,
+            fork_angle: 0.0,
+            leader_length: 1.0,
+            leader_up: 0.0,
+        }),
+        Archetype::Pine => Some(TreeParams {
+            shape: Shape::TendFlame,
+            levels: 3,
+            level: [
+                lv(1.0, 0.0, 10, 0.0, 0.0, 25.0, 0.0, 0.0, 0.0, 0.0, 0),
+                lv(0.35, 0.1, 5, -20.0, 0.0, 50.0, 65.0, 20.0, 137.5, 30.0, 28),
+                lv(0.45, 0.1, 3, -10.0, 0.0, 40.0, 40.0, 20.0, 137.5, 40.0, 12),
+                UNUSED,
+            ],
+            base_size: 0.55,
+            ratio: 0.018,
+            ratio_power: 1.0,
+            flare: 0.3,
+            attraction_up: 0.4,
+            crown_ratio: 0.45,
+            prune_peak: 0.6,
+            prune_power_low: 0.6,
+            prune_power_high: 0.5,
+            dead_branches: 0.3,
+            trunk_lean: 6.0,
+            asymmetry: 0.25,
+            trunk_forks: 0,
+            fork_height: 0.0,
+            fork_angle: 0.0,
+            leader_length: 1.0,
+            leader_up: 0.0,
+        }),
+        Archetype::Willow => Some(TreeParams {
+            shape: Shape::Hemispherical,
+            levels: 3,
+            level: [
+                lv(1.0, 0.0, 8, 0.0, 0.0, 15.0, 0.0, 0.0, 0.0, 0.0, 0),
+                lv(0.55, 0.1, 6, 70.0, 0.0, 30.0, 40.0, 10.0, 137.5, 20.0, 28),
+                lv(0.6, 0.1, 4, 30.0, 0.0, 20.0, 30.0, 10.0, 137.5, 30.0, 12),
+                UNUSED,
+            ],
+            base_size: 0.15,
+            ratio: 0.022,
+            ratio_power: 1.1,
+            flare: 0.7,
+            attraction_up: -2.5,
+            crown_ratio: 1.0,
+            prune_peak: 0.5,
+            prune_power_low: 0.4,
+            prune_power_high: 0.3,
+            dead_branches: 0.1,
+            trunk_lean: 5.0,
+            asymmetry: 0.15,
+            trunk_forks: 3,
+            fork_height: 0.3,
+            fork_angle: 30.0,
+            leader_length: 0.8,
+            leader_up: 0.3,
+        }),
+        Archetype::Birch => Some(TreeParams {
+            shape: Shape::TendFlame,
+            levels: 3,
+            level: [
+                lv(1.0, 0.0, 10, 0.0, 0.0, 15.0, 0.0, 0.0, 0.0, 0.0, 0),
+                lv(
+                    0.4, 0.08, 6, -20.0, 15.0, 30.0, 45.0, -15.0, 137.5, 15.0, 40,
+                ),
+                lv(0.45, 0.1, 4, 20.0, 0.0, 30.0, 40.0, 15.0, 137.5, 30.0, 14),
+                UNUSED,
+            ],
+            base_size: 0.3,
+            ratio: 0.014,
+            ratio_power: 1.0,
+            flare: 0.3,
+            attraction_up: -0.8,
+            crown_ratio: 0.5,
+            prune_peak: 0.55,
+            prune_power_low: 0.6,
+            prune_power_high: 0.5,
+            dead_branches: 0.15,
+            trunk_lean: 5.0,
+            asymmetry: 0.15,
+            trunk_forks: 0,
+            fork_height: 0.0,
+            fork_angle: 0.0,
+            leader_length: 1.0,
+            leader_up: 0.0,
+        }),
+        Archetype::Shrub => Some(TreeParams {
+            shape: Shape::Spherical,
+            levels: 3,
+            level: [
+                lv(1.0, 0.0, 6, 0.0, 0.0, 30.0, 0.0, 0.0, 0.0, 0.0, 0),
+                lv(0.45, 0.1, 4, -15.0, 0.0, 40.0, 50.0, 15.0, 137.5, 30.0, 30),
+                lv(0.5, 0.1, 3, 0.0, 0.0, 40.0, 45.0, 15.0, 137.5, 30.0, 10),
+                UNUSED,
+            ],
+            base_size: 0.05,
+            ratio: 0.02,
+            ratio_power: 1.0,
+            flare: 0.0,
+            attraction_up: 0.3,
+            crown_ratio: 1.0,
+            prune_peak: 0.55,
+            prune_power_low: 0.6,
+            prune_power_high: 0.4,
+            dead_branches: 0.1,
+            trunk_lean: 0.0,
+            asymmetry: 0.15,
+            trunk_forks: 5,
+            fork_height: 0.02,
+            fork_angle: 25.0,
+            leader_length: 0.85,
+            leader_up: 0.3,
+        }),
+        Archetype::Hedge => Some(TreeParams {
+            shape: Shape::Cylindrical,
+            levels: 3,
+            level: [
+                lv(1.0, 0.0, 6, 0.0, 0.0, 30.0, 0.0, 0.0, 0.0, 0.0, 0),
+                lv(0.45, 0.1, 4, -15.0, 0.0, 40.0, 60.0, 15.0, 137.5, 30.0, 40),
+                lv(0.5, 0.1, 3, 0.0, 0.0, 40.0, 45.0, 15.0, 137.5, 30.0, 10),
+                UNUSED,
+            ],
+            base_size: 0.05,
+            ratio: 0.02,
+            ratio_power: 1.0,
+            flare: 0.0,
+            attraction_up: 0.3,
+            crown_ratio: 1.0,
+            prune_peak: 0.5,
+            prune_power_low: 0.1,
+            prune_power_high: 0.1,
+            dead_branches: 0.1,
+            trunk_lean: 0.0,
+            asymmetry: 0.15,
+            trunk_forks: 6,
+            fork_height: 0.02,
+            fork_angle: 20.0,
+            leader_length: 0.85,
+            leader_up: 0.3,
+        }),
+        Archetype::None => None,
     }
 }
 
@@ -107,18 +288,9 @@ mod tests {
 
     #[test]
     fn presets_exist() {
-        assert!(preset(Archetype::BroadleafWide).is_some());
-        assert!(preset(Archetype::ConiferConical).is_some());
-        for a in [
-            Archetype::BroadleafNarrow,
-            Archetype::Pine,
-            Archetype::Willow,
-            Archetype::Birch,
-            Archetype::Shrub,
-            Archetype::Hedge,
-            Archetype::None,
-        ] {
-            assert!(preset(a).is_none());
+        for (a, _, _) in TARGETS {
+            assert!(preset(a).is_some());
         }
+        assert!(preset(Archetype::None).is_none());
     }
 }
