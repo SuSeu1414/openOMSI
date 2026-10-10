@@ -1,5 +1,6 @@
 //! Procedural tree generation (Weber-Penn): parameters, the stem skeleton and its tube mesh.
 
+mod bake;
 pub mod leaves;
 pub mod mesh;
 pub mod params;
@@ -7,6 +8,7 @@ mod rings;
 pub mod skeleton;
 pub mod tube;
 
+pub use bake::Crown;
 pub use leaves::*;
 pub use mesh::*;
 pub use params::*;

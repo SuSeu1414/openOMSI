@@ -1,7 +1,7 @@
 //! Developer tool: renders generated trees (front, side, top) to a PNG with a CPU rasteriser.
 //!
 //! `tree_preview <archetype> <height> <width> <out.png> [--seeds N] [--seed0 S]
-//!  [--min-radius R] [--size PX] [--no-leaves]`
+//!  [--min-radius R] [--size PX] [--no-leaves] [--ao]`
 
 use glam::{Vec2, Vec3};
 use omsi_vegetation::classify::Archetype;
@@ -38,7 +38,7 @@ fn usage(msg: &str) -> ! {
     eprintln!("error: {msg}");
     eprintln!(
         "usage: tree_preview <archetype> <height> <width> <out.png> [--seeds N] [--seed0 S] \
-         [--min-radius R] [--size PX] [--no-leaves]"
+         [--min-radius R] [--size PX] [--no-leaves] [--ao]"
     );
     std::process::exit(2);
 }
@@ -66,7 +66,11 @@ fn main() {
     let out = &args[3];
     let (mut seeds, mut seed0, mut min_radius, mut size) = (3u32, 1u64, 0.0f32, 512usize);
     let no_leaves = args[4..].iter().any(|a| a == "--no-leaves");
-    let rest: Vec<&String> = args[4..].iter().filter(|a| *a != "--no-leaves").collect();
+    let ao = args[4..].iter().any(|a| a == "--ao");
+    let rest: Vec<&String> = args[4..]
+        .iter()
+        .filter(|a| *a != "--no-leaves" && *a != "--ao")
+        .collect();
     let mut it = rest.into_iter();
     while let Some(k) = it.next() {
         let v = it
@@ -99,7 +103,7 @@ fn main() {
     for j in 0..seeds {
         let seed = seed0 + j as u64;
         let sk = skeleton(&p, Target { height, width }, seed);
-        let mesh = tubes(&sk, &opts);
+        let mesh = tubes(&sk, &opts, seed);
         let leaf = if no_leaves {
             Default::default()
         } else {
@@ -142,7 +146,10 @@ fn main() {
                 for t in m.indices.as_chunks::<3>().0 {
                     let w = t.map(|i| m.positions[i as usize]);
                     let n = (w[1] - w[0]).cross(w[2] - w[0]).normalize_or_zero();
-                    let k = 0.25 + 0.75 * n.dot(light).abs();
+                    let mut k = 0.25 + 0.75 * n.dot(light).abs();
+                    if ao {
+                        k *= t.iter().map(|&i| m.attrs[i as usize].ao).sum::<f32>() / 3.0;
+                    }
                     let col = base.map(|c| (c * k).round().clamp(0.0, 255.0) as u8);
                     let s = w.map(proj);
                     let area = edge(s[0], s[1], s[2]);

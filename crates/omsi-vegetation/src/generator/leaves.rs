@@ -3,10 +3,11 @@
 
 use glam::{Quat, Vec2, Vec3};
 
+use super::bake::{attrs, stem_bake, Crown};
 use super::mesh::Mesh;
 use super::params::LeafParams;
 use super::skeleton::{sample, Skeleton, Stem};
-use crate::seed::{splitmix64, Rng};
+use crate::seed::{splitmix64, unit, Rng};
 
 /// The card outline in card space (u across, v from base 0 to tip 1), counter-clockwise, convex.
 pub const HULL: [Vec2; 8] = [
@@ -21,13 +22,16 @@ pub const HULL: [Vec2; 8] = [
 ];
 pub const CARD_TRIANGLES: usize = 6;
 
-fn length(s: &Stem) -> f32 {
+pub(super) fn length(s: &Stem) -> f32 {
     s.points.windows(2).map(|w| w[0].distance(w[1])).sum()
 }
 
 /// Leaf cards of a skeleton: 8 vertices and 6 triangles per card, in card order.
 pub fn leaves(sk: &Skeleton, lp: &LeafParams, seed: u64) -> Mesh {
     let mut mesh = Mesh::default();
+    let crown = Crown::of(sk);
+    let sb = stem_bake(sk, seed);
+    let mut card = 0u64;
     let outer = sk.stems.iter().map(|s| s.level).max().unwrap_or(0);
     for (idx, s) in sk.stems.iter().enumerate() {
         if s.dead || s.level == 0 {
@@ -72,13 +76,17 @@ pub fn leaves(sk: &Skeleton, lp: &LeafParams, seed: u64) -> Mesh {
             let n = Quat::from_axis_angle(d, (r.signed() * 25.0).to_radians()) * n;
             let w = d.cross(n);
             let base = mesh.positions.len() as u32;
+            let card_rand = unit(seed ^ 0xCA4D_0002, card);
+            card += 1;
             for uv in HULL {
-                mesh.positions
-                    .push(pos + w * (uv.x - 0.5) * size + d * uv.y * size);
+                let p = pos + w * (uv.x - 0.5) * size + d * uv.y * size;
+                mesh.positions.push(p);
+                mesh.attrs
+                    .push(attrs(&crown, &sb[idx], p, uv.y, true, card_rand));
                 mesh.normals.push(n);
                 mesh.uvs.push(uv);
             }
-            for i in 1..7 {
+            for i in 1..=CARD_TRIANGLES as u32 {
                 mesh.indices.extend([base, base + i, base + i + 1]);
             }
         }

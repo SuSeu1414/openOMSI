@@ -4,6 +4,7 @@ use std::f32::consts::TAU;
 
 use glam::{Vec2, Vec3};
 
+use super::bake::{attrs, stem_bake, Crown};
 use super::mesh::Mesh;
 use super::rings::{collar_radius, flare_radius, resample, Ring};
 use super::skeleton::{sample, Flare, Skeleton, Stem};
@@ -82,9 +83,11 @@ fn plan(sk: &Skeleton, s: &Stem, o: &TubeOptions) -> Plan {
     }
 }
 
-pub fn tubes(sk: &Skeleton, o: &TubeOptions) -> Mesh {
+pub fn tubes(sk: &Skeleton, o: &TubeOptions, seed: u64) -> Mesh {
     let mut mesh = Mesh::default();
-    for s in &sk.stems {
+    let crown = Crown::of(sk);
+    let sb = stem_bake(sk, seed);
+    for (si, s) in sk.stems.iter().enumerate() {
         if s.radii[0] < o.min_radius || s.level > o.max_level || s.points.len() < 2 {
             continue;
         }
@@ -118,7 +121,10 @@ pub fn tubes(sk: &Skeleton, o: &TubeOptions) -> Mesh {
                     (None, Some(rp)) => collar_radius(ring, rp, r0),
                     _ => ring.radius,
                 };
-                mesh.positions.push(ring.pos + d * radius);
+                let p = ring.pos + d * radius;
+                mesh.positions.push(p);
+                mesh.attrs
+                    .push(attrs(&crown, &sb[si], p, 0.0, false, sb[si].rand));
                 mesh.normals.push((d - h * dr).normalize());
                 mesh.uvs.push(Vec2::new(wraps * k as f32 / n as f32, v));
             }
@@ -186,7 +192,7 @@ mod tests {
     fn same_skeleton_same_mesh() {
         let o = TubeOptions::default();
         for (p, t) in both() {
-            let d = |seed| tubes(&skeleton(&p, t, seed), &o).digest();
+            let d = |seed| tubes(&skeleton(&p, t, seed), &o, seed).digest();
             assert_eq!(d(42), d(42));
             assert_ne!(d(42), d(43));
         }
@@ -195,7 +201,7 @@ mod tests {
     #[test]
     fn mesh_is_well_formed() {
         for (p, t) in both() {
-            let m = tubes(&skeleton(&p, t, 42), &TubeOptions::default());
+            let m = tubes(&skeleton(&p, t, 42), &TubeOptions::default(), 42);
             assert_eq!(m.positions.len(), m.normals.len());
             assert_eq!(m.positions.len(), m.uvs.len());
             assert_eq!(m.indices.len() % 3, 0);
@@ -213,7 +219,7 @@ mod tests {
             let mut sk = skeleton(&p, t, 42);
             sk.flare = None;
             let tr = &sk.stems[0];
-            let m = tubes(&sk, &o);
+            let m = tubes(&sk, &o, 42);
             let (n, _) = ring_counts(tr.radii[0], &o);
             for (j, v) in m.positions[..tr.points.len() * (n + 1)].iter().enumerate() {
                 let i = j / (n + 1);
@@ -229,7 +235,7 @@ mod tests {
             let mut sk = skeleton(&p, t, 42);
             sk.flare = None;
             let tr = &sk.stems[0];
-            let m = tubes(&sk, &o);
+            let m = tubes(&sk, &o, 42);
             let (n, _) = ring_counts(tr.radii[0], &o);
             let tris = (tr.points.len() - 1) * n * 2;
             for tri in m.indices[..tris * 3].chunks(3) {
@@ -256,7 +262,7 @@ mod tests {
             }],
             flare: None,
         };
-        let m = tubes(&sk, &TubeOptions::default());
+        let m = tubes(&sk, &TubeOptions::default(), 42);
         let (n, wraps) = ring_counts(0.3, &TubeOptions::default());
         assert_eq!(wraps, 4.0);
         let per_m = wraps / (TAU * 0.3);
@@ -272,7 +278,7 @@ mod tests {
         let o = TubeOptions::default();
         for (p, t) in both() {
             let sk = skeleton(&p, t, 42);
-            let m = tubes(&sk, &o);
+            let m = tubes(&sk, &o, 42);
             let mut at = 0;
             for s in &sk.stems {
                 let pl = plan(&sk, s, &o);
@@ -303,8 +309,8 @@ mod tests {
         for (p, t) in both() {
             let sk = skeleton(&p, t, 42);
             let (a, b) = (
-                tubes(&sk, &TubeOptions::default()).triangles(),
-                tubes(&sk, &small).triangles(),
+                tubes(&sk, &TubeOptions::default(), 42).triangles(),
+                tubes(&sk, &small, 42).triangles(),
             );
             eprintln!("budget: default {a}, min_radius 0.01 {b}");
             assert!(a <= 25_000);
@@ -313,7 +319,7 @@ mod tests {
         let mut over = false;
         for (a, height, width) in crate::presets::TARGETS {
             let sk = skeleton(&preset(a).unwrap(), Target { height, width }, 42);
-            let n = tubes(&sk, &TubeOptions::default()).triangles();
+            let n = tubes(&sk, &TubeOptions::default(), 42).triangles();
             eprintln!("budget {a:?}: {n}");
             over |= n > 25_000;
         }
@@ -339,7 +345,7 @@ mod tests {
     #[test]
     fn flare_widens_the_foot() {
         let (sk, o) = (broadleaf(), TubeOptions::default());
-        let m = tubes(&sk, &o);
+        let m = tubes(&sk, &o, 42);
         let pl = plan(&sk, &sk.stems[0], &o);
         let (f, r0) = (sk.flare.unwrap(), sk.stems[0].radii[0]);
         let j0 = pl.rings.iter().position(|r| r.s == 0.0).unwrap();
@@ -362,7 +368,7 @@ mod tests {
     #[test]
     fn buttresses_are_lobes() {
         let (sk, o) = (broadleaf(), TubeOptions::default());
-        let m = tubes(&sk, &o);
+        let m = tubes(&sk, &o, 42);
         let pl = plan(&sk, &sk.stems[0], &o);
         let j0 = pl.rings.iter().position(|r| r.s == 0.0).unwrap();
         let d: Vec<f32> = m.positions[j0 * (pl.n + 1)..][..pl.n]
@@ -394,7 +400,7 @@ mod tests {
     #[test]
     fn collars_blend_into_the_parent() {
         let (sk, o) = (broadleaf(), TubeOptions::default());
-        let m = tubes(&sk, &o);
+        let m = tubes(&sk, &o, 42);
         let mut at = 0;
         for s in &sk.stems {
             let pl = plan(&sk, s, &o);
@@ -425,7 +431,7 @@ mod tests {
     #[test]
     fn modified_normals_follow_the_surface() {
         let (sk, o) = (broadleaf(), TubeOptions::default());
-        let m = tubes(&sk, &o);
+        let m = tubes(&sk, &o, 42);
         let pl = plan(&sk, &sk.stems[0], &o);
         let f = sk.flare.unwrap();
         let j0 = pl.rings.iter().position(|r| r.s == 0.0).unwrap();
