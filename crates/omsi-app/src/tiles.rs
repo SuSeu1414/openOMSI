@@ -1095,6 +1095,9 @@ impl Streamer {
             log::info!("tile streaming at {}: {} loaded / {} unloaded so far; {}", at.join(" "), self.loaded_total, self.unloaded_total, self.world.gpu_summary(scene));
             if omsi_cfg::flags::OMSI_PROFILE.is_set() {
                 log::info!("  {}", self.world.cpu_summary());
+                if let Some(s) = self.world.vegetation.variant_summary() {
+                    log::info!("  {s}");
+                }
             }
         }
         let total = t0.elapsed();

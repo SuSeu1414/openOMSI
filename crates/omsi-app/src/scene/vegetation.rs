@@ -30,6 +30,7 @@ pub(crate) struct VariantStats {
 pub(crate) struct Vegetation {
     overrides: OnceLock<Overrides>,
     classes: Mutex<HashMap<(String, String), Class>>,
+    // ponytail: kept for the map's lifetime (bounded: archetypes x VARIANTS x 3 LODs, ~1 MB each); per-tile refcounts if the GPU copies of PR9 need to be freed while driving.
     variants: Arc<Mutex<HashMap<VariantKey, VariantSlot>>>,
     pub(crate) variant_stats: Arc<VariantStats>,
     /// None = the disk cache is off (no home dir); set once, tests set it to None.
@@ -127,6 +128,36 @@ impl Vegetation {
         v
     }
 
+    /// One line for the `OMSI_PROFILE` summary; None while no variant was ever requested.
+    pub(crate) fn variant_summary(&self) -> Option<String> {
+        fn mesh_bytes(m: &omsi_vegetation::generator::Mesh) -> usize {
+            m.positions.len() * 12 + m.normals.len() * 12 + m.uvs.len() * 8 + m.attrs.len() * 64 + m.indices.len() * 4
+        }
+        let (total, pending, missing, bytes) = {
+            let map = self.variants.lock();
+            let (mut pending, mut missing, mut bytes) = (0, 0, 0);
+            for s in map.values() {
+                match s {
+                    VariantSlot::Pending => pending += 1,
+                    VariantSlot::Missing => missing += 1,
+                    VariantSlot::Ready(m) => bytes += mesh_bytes(&m.bark) + mesh_bytes(&m.leaves),
+                }
+            }
+            (map.len(), pending, missing, bytes)
+        };
+        if total == 0 {
+            return None;
+        }
+        let st = &self.variant_stats;
+        let (generated, loaded) = (st.generated.load(Ordering::Relaxed), st.loaded.load(Ordering::Relaxed));
+        let mean_ms = st.job_us.load(Ordering::Relaxed) as f64 / f64::from((generated + loaded).max(1)) / 1000.0;
+        Some(format!(
+            "trees: {total} variants ({generated} generated, {loaded} loaded, {pending} pending, {missing} missing), job mean {mean_ms:.1} ms, max {:.1} ms, {:.1} MB in memory",
+            st.max_job_us.load(Ordering::Relaxed) as f64 / 1000.0,
+            bytes as f64 / 1e6
+        ))
+    }
+
     /// The mesh if Ready.
     #[allow(dead_code)]
     pub(crate) fn variant(&self, key: VariantKey) -> Option<Arc<TreeMesh>> {
@@ -211,6 +242,19 @@ mod tests {
         assert_eq!(v.variant_stats.generated.load(Ordering::Relaxed), 3);
         assert_eq!(v.variant_stats.loaded.load(Ordering::Relaxed), 0);
         assert!(m[0].triangles() >= m[2].triangles());
+    }
+
+    #[test]
+    fn variant_summary_counts() {
+        let v = Vegetation::default();
+        v.cache_root.set(None).unwrap();
+        assert!(v.variant_summary().is_none());
+        let i = v.request_variants(Archetype::Shrub, 7);
+        let k = keys(Archetype::Shrub, i);
+        wait(Duration::from_secs(60), || k.iter().all(|k| v.variant(*k).is_some()));
+        let s = v.variant_summary().expect("summary after a request");
+        assert!(s.starts_with("trees: 3 variants (3 generated, 0 loaded, 0 pending, 0 missing)"), "{s}");
+        assert!(s.contains(" MB in memory"), "{s}");
     }
 
     #[test]
