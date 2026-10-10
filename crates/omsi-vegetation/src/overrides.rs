@@ -1,7 +1,7 @@
 //! User and mod-pack corrections of the classifier: rules read from `Vegetation/*.cfg`.
 //! Pure data: the caller finds the files and passes their text.
 
-use crate::classify::{is_known_species, Archetype};
+use crate::classify::{classify, is_known_species, species_static, Archetype, Class, Signals};
 use omsi_cfg::CfgFile;
 use std::path::Path;
 
@@ -95,6 +95,18 @@ impl Overrides {
             Target::Sco => glob_match(&r.pattern, sco_path),
             Target::Texture => tex.is_some_and(|t| glob_match(&r.pattern, t)),
         })
+    }
+}
+
+/// The class of a tree: the first matching rule (taken as certain, confidence 1.0;
+/// archetype None keeps the original look), else the classifier.
+pub fn classify_with<'r>(o: &'r Overrides, s: &Signals) -> (Class, Option<&'r Rule>) {
+    match o.find(s.sco_path, s.texture) {
+        Some(r) => {
+            let confidence = if r.archetype == Archetype::None { 0.0 } else { 1.0 };
+            (Class { archetype: r.archetype, species: r.species.as_deref().and_then(species_static), confidence }, Some(r))
+        }
+        None => (classify(s), None),
     }
 }
 
@@ -207,5 +219,32 @@ none
         assert_eq!(o.find("x.sco", Some("other.tga")).unwrap().archetype, Archetype::Shrub);
         assert_eq!(o.find("x.sco", None).unwrap().archetype, Archetype::Pine);
         assert!(o.find("x.txt", None).is_none());
+    }
+
+    #[test]
+    fn classify_with_rules() {
+        let sig = |sco| Signals { tree_section: true, sco_path: sco, groups: &[], texture: Some("Birke01.dds"), height: Some(15.0) };
+        let mut o = Overrides::default();
+        let (plain, rule) = classify_with(&o, &sig("a/x.sco"));
+        assert!(rule.is_none());
+        assert_eq!(plain, classify(&sig("a/x.sco")));
+        assert_eq!(plain.archetype, Archetype::Birch);
+        o.parse_append(Path::new("a.cfg"), "[rule]
+sco
+*/x.sco
+pine
+pine
+[rule]
+sco
+*/y.sco
+none
+-
+");
+        let (c, r) = classify_with(&o, &sig("a/x.sco"));
+        assert_eq!((c.archetype, c.species, c.confidence), (Archetype::Pine, Some("pine"), 1.0));
+        assert!(c.replace_geometry() && r.is_some());
+        let (c, _) = classify_with(&o, &sig("a/y.sco"));
+        assert!(!c.replace_geometry());
+        assert_eq!(classify_with(&o, &sig("a/z.sco")).0, plain);
     }
 }

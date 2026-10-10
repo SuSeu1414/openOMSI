@@ -68,6 +68,7 @@ impl World {
             );
         }
         Ok(World {
+            vegetation: Default::default(),
             root: root.to_path_buf(),
             global,
             map_dir,

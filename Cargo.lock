@@ -3332,6 +3332,7 @@ dependencies = [
  "omsi-texture",
  "omsi-timetable",
  "omsi-ui",
+ "omsi-vegetation",
  "omsi-vehicle",
  "openxr",
  "parking_lot",

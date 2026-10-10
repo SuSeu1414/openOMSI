@@ -254,6 +254,7 @@ impl World {
         let debug_objects = omsi_cfg::flags::OMSI_DEBUG_OBJECTS.is_set();
         let check_objects = omsi_cfg::flags::OMSI_CHECK_OBJECTS.is_set();
         let debug_float = omsi_cfg::flags::OMSI_DEBUG_FLOAT.is_set();
+        let debug_trees = omsi_cfg::flags::OMSI_DEBUG_TREES.is_set();
         let index = self.index();
         for (oi, (o, fp)) in st.objects.iter().zip(res.poses.iter()).enumerate() {
             let Some(Pose { pos, rot: xf }) = *fp else {
@@ -319,10 +320,16 @@ impl World {
                 }
             }
             if let Some(mut tree) = tree_of(&ot, o, pos, heading) {
+                if debug_trees {
+                    self.vegetation.tree_class(&ot, &tree.1, tree.3);
+                }
                 // (a season's phase: this tree's own look)
                 tree.1 = self.tree_look_texture(&ot, &tree.1, o.key, pos);
                 trees.push(tree);
                 continue;
+            }
+            if debug_trees && vegetation_give_of(&ot.sco).is_some() {
+                self.vegetation.plant_class(&ot);
             }
             // Stock junctions carry a light program even where the map places no signals.
             // Use the map-wide index so lamps on an unloaded neighbouring tile still count.

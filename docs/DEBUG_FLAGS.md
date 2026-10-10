@@ -86,6 +86,7 @@ effect. On Android, `openOMSI/env.txt` holds `NAME=value` lines that are set bef
 | `OMSI_DEBUG_TRAFFIC` | bool | off | use | app, sim | Log traffic light programs, cars standing for long and hard bends. |
 | `OMSI_DEBUG_TRAILER` | bool | off | use | sim | Log a trailer's rest, sag and lift on the ground. |
 | `OMSI_DEBUG_TRAILERS` | bool | off | use | sim | Log coupled parts off the level of what pulls them. |
+| `OMSI_DEBUG_TREES` | bool | off | use | app | Log how each tree and plant type is classified (archetype, species, confidence, override rule). |
 | `OMSI_DEBUG_TRIGGERS` | bool | off | use | app | Log the variables a mouse trigger changed. |
 | `OMSI_DEBUG_UNLINKED` | bool | off | use | sim | Log lane ends with an untaken lane start near them. |
 | `OMSI_DEBUG_UPLOAD` | bool | off | use | app | Log slow GPU uploads item by item. |

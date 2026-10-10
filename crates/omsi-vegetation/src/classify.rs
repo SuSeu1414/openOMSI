@@ -144,7 +144,12 @@ const SPECIES: &[(&str, Archetype, Option<&str>)] = &[
 
 /// True iff `s` is a species name of the table, ASCII case-insensitive.
 pub fn is_known_species(s: &str) -> bool {
-    SPECIES.iter().any(|(_, _, sp)| sp.is_some_and(|sp| sp.eq_ignore_ascii_case(s)))
+    species_static(s).is_some()
+}
+
+/// The table's species name equal to `s`, ASCII case-insensitive.
+pub fn species_static(s: &str) -> Option<&'static str> {
+    SPECIES.iter().find_map(|(_, _, sp)| sp.filter(|sp| sp.eq_ignore_ascii_case(s)))
 }
 
 /// Lowercase words of `s`: umlauts spelled out, everything non-alphabetic separates.

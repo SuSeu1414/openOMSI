@@ -2,6 +2,8 @@
 use super::*;
 
 pub struct World {
+    /// Tree and plant classes seen so far (only filled with `OMSI_DEBUG_TREES`).
+    pub(crate) vegetation: Vegetation,
     pub root: PathBuf,
     pub global: GlobalCfg,
     pub map_dir: PathBuf,

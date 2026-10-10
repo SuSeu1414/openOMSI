@@ -21,6 +21,7 @@ winresource.workspace = true
 
 [dependencies]
 omsi-cfg = { path = "../omsi-cfg" }
+omsi-vegetation = { path = "../omsi-vegetation" }
 omsi-map = { path = "../omsi-map" }
 omsi-scenery = { path = "../omsi-scenery" }
 omsi-model = { path = "../omsi-model" }

@@ -634,6 +634,12 @@ fn owner_root<'a>(path: &Path, roots: &'a [PathBuf]) -> Option<&'a PathBuf> {
     roots.iter().filter(|r| path.starts_with(r)).max_by_key(|r| r.components().count())
 }
 
+/// `path` relative to the content root (or installation) it lies under; `None` when under none.
+pub fn root_relative(path: &Path) -> Option<PathBuf> {
+    let roots = content_roots();
+    owner_root(path, &roots).and_then(|r| path.strip_prefix(r).ok()).map(Path::to_path_buf)
+}
+
 /// The same relative location of `base` under `root` (None if `base` belongs to `root`
 /// itself, or to no root at all).
 fn mirrored_base(base: &Path, root: &Path, roots: &[PathBuf]) -> Option<PathBuf> {
@@ -1010,6 +1016,15 @@ pub fn ensure_content_layout(dir: &Path) -> std::io::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn root_relative_strips_the_root() {
+        let root = PathBuf::from("zz_root_relative_test_root");
+        add_content_root(root.clone());
+        assert_eq!(root_relative(&root.join("Sceneryobjects").join("a.sco")), Some(PathBuf::from("Sceneryobjects").join("a.sco")));
+        assert_eq!(root_relative(Path::new("zz_elsewhere/a.sco")), None);
+        remove_content_root(&root);
+    }
+
     use super::*;
 
     #[test]

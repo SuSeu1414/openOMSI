@@ -246,6 +246,7 @@ flags! {
     OMSI_DEBUG_TRAFFIC: Bool, Debug, Use, "off", "Log traffic light programs, cars standing for long and hard bends.";
     OMSI_DEBUG_TRAILER: Bool, Debug, Use, "off", "Log a trailer's rest, sag and lift on the ground.";
     OMSI_DEBUG_TRAILERS: Bool, Debug, Use, "off", "Log coupled parts off the level of what pulls them.";
+    OMSI_DEBUG_TREES: Bool, Debug, Use, "off", "Log how each tree and plant type is classified (archetype, species, confidence, override rule).";
     OMSI_DEBUG_TRIGGERS: Bool, Debug, Use, "off", "Log the variables a mouse trigger changed.";
     OMSI_DEBUG_UNLINKED: Bool, Debug, Use, "off", "Log lane ends with an untaken lane start near them.";
     OMSI_DEBUG_UPLOAD: Bool, Debug, Use, "off", "Log slow GPU uploads item by item.";
