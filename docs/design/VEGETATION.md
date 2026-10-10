@@ -250,7 +250,7 @@ Key takeaways:
 
 * **NEW `crates/omsi-vegetation`** (layer 1: pure data, no GPU, no clock). Modules:
   `classify` (signals -> `Archetype` + `confidence: f32`), `overrides` (parser of
-  `vegetation/overrides.cfg`), `seed`, `gen` (skeleton, meshes, LODs), `cache` (keys and
+  `Vegetation/*.cfg`), `seed`, `gen` (skeleton, meshes, LODs), `cache` (keys and
   (de)serialisation of meshes), `presets`, `tex` (procedural bark and leaf textures as RGBA
   buffers). Depends on `omsi-cfg`, `omsi-scenery`, `glam`, `rayon`; nothing else new.
 * **`omsi-texture`:** coverage-preserving mip generation, a new function next to
@@ -294,21 +294,21 @@ it does not divide. For plant models the target is the bounding box of the mesh.
 
 ### 4.3 Overrides
 
-`Mods/<pack>/vegetation/overrides.cfg`, in the OMSI-style keyword-block format parsed with
-`omsi-cfg` (no new dependency; TOML would need the `toml` crate). Example:
+Every `*.cfg` in the folder `Vegetation` of the content folder, read in file-name order, in
+the OMSI-style keyword-block format parsed with `omsi-cfg` (no new external crate). Example:
 
 ```
 [rule]
-glob
+sco
 Sceneryobjects\Trees_MC\tree_medium_0*.sco
-archetype
-BroadleafWide
-species
-linde
+broadleaf_wide
+linden
 ```
 
-A rule matches by object path, texture name or glob; the first match wins; `archetype
-none` keeps the original look. Documented in `docs/MODDING.md` in Phase 1.
+Four lines after `[rule]`: target (`sco` or `texture`), glob pattern (`*`, `?`, case and slash
+direction ignored), archetype name (`none` keeps the original look), species or `-`. The first
+match wins and counts as certain. Parsed by `omsi_vegetation::overrides`; documented in
+`docs/MODDING.md`.
 
 ### 4.4 Determinism
 
@@ -511,6 +511,6 @@ Sizes: S under 300 changed lines, M under 1000, L over that. One change per PR
 * **(a) Texture source:** procedural textures generated at runtime, no binaries in the
   repo. An optional CC0 "vegetation pack" (ambientCG / Poly Haven, licences listed in its
   README, installed through the Mods page) may come later.
-* **(b) Overrides file format:** OMSI-style `.cfg`, no new dependency. Compatibility with
+* **(b) Overrides file format:** OMSI-style `.cfg`, no new external crate. Compatibility with
   OMSI 2 itself is not a goal; only openOMSI reads the file.
 * **(c) `vanilla_plus`:** gets nothing.

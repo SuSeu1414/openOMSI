@@ -142,6 +142,11 @@ const SPECIES: &[(&str, Archetype, Option<&str>)] = &[
     ("laub", A::BroadleafWide, None),
 ];
 
+/// True iff `s` is a species name of the table, ASCII case-insensitive.
+pub fn is_known_species(s: &str) -> bool {
+    SPECIES.iter().any(|(_, _, sp)| sp.is_some_and(|sp| sp.eq_ignore_ascii_case(s)))
+}
+
 /// Lowercase words of `s`: umlauts spelled out, everything non-alphabetic separates.
 fn norm(s: &str) -> Vec<String> {
     let mut t = String::with_capacity(s.len());
@@ -211,6 +216,12 @@ mod tests {
     use Archetype::{BroadleafNarrow, BroadleafWide, Birch, ConiferConical, Pine, Shrub, Willow};
 
     const D: &str = "Sceneryobjects\\Trees_MC\\";
+
+    #[test]
+    fn known_species() {
+        assert!(is_known_species("Linden"));
+        assert!(!is_known_species("palm"));
+    }
 
     /// (tree_section, path, groups, texture, height) -> (archetype, species, confidence)
     type Row = (bool, String, Vec<String>, Option<&'static str>, Option<f32>, Archetype, Option<&'static str>, Option<f32>);

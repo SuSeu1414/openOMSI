@@ -206,6 +206,43 @@ station), or `SndExt_Radio` (the station button, 0 = off) with `SndVol_Radio` (t
 its `magnitola_1` (`frequency@station`, `@` the line break) gets the map's frequency for the
 place in its first line and the station and song in its second.
 
+## Trees: telling openOMSI what a tree is
+
+openOMSI replaces map trees with new ones by what it takes them for (from the object's
+`[tree]` section, its name, texture and groups). Where it is wrong, you correct it with rules.
+Put a `.cfg` file in the folder `Vegetation` of the content folder (a pack ships its own, e.g.
+`Vegetation/my_pack.cfg`, so packs do not overwrite each other). Every `*.cfg` there is read in
+file-name order and the first matching rule wins. Lines outside a `[rule]` block are comments.
+
+```
+[rule]
+sco
+Sceneryobjects\Trees_MC\tree_medium_0*.sco
+broadleaf_wide
+linden
+
+[rule]
+texture
+Blumen*.tga
+none
+-
+```
+
+Four lines follow `[rule]`:
+
+1. what is matched: `sco` (the object file, path as written in the map, from the OMSI
+   folder) or `texture` (the tree's texture file name, without folders);
+2. the pattern: `*` is any run of characters, `?` one character; case and the direction of
+   slashes do not matter;
+3. the archetype: `broadleaf_wide`, `broadleaf_narrow`, `conifer_conical`, `pine`, `willow`,
+   `birch`, `shrub`, `hedge`, or `none` (keep the original look);
+4. the species, or `-` for none: `birch`, `poplar`, `pine`, `willow`, `spruce`, `fir`, `larch`,
+   `cypress`, `thuja`, `oak`, `beech`, `linden`, `maple`, `chestnut`, `plane`, `hedge`, `shrub`.
+
+A matching rule is taken as certain: the tree is replaced even where the classifier was
+unsure. A rule with a wrong value is skipped with a warning naming the file and line. Only
+openOMSI reads these files; OMSI 2 never looks at them.
+
 ## What stays as in OMSI 2
 
 The following behave as in OMSI 2 so that existing content works unchanged:

@@ -6,3 +6,4 @@ license.workspace = true
 description = "Vegetation: classification of map trees, seeds (pure data, no GPU)"
 
 [dependencies]
+omsi-cfg = { path = "../omsi-cfg" }

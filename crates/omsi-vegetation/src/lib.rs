@@ -2,4 +2,5 @@
 //! variation derived from it (`seed`). Pure data: no GPU, no clock, no dependencies.
 
 pub mod classify;
+pub mod overrides;
 pub mod seed;

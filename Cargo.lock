@@ -3617,6 +3617,9 @@ dependencies = [
 [[package]]
 name = "omsi-vegetation"
 version = "0.1.0"
+dependencies = [
+ "omsi-cfg",
+]
 
 [[package]]
 name = "omsi-vehicle"
