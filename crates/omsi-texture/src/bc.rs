@@ -693,6 +693,39 @@ pub fn downsample(rgba: &[u8], w: u32, h: u32) -> (Vec<u8>, u32, u32) {
     (out, nw as u32, nh as u32)
 }
 
+/// The next mip level of a data picture: a plain 2x2 box on all four channels (no sRGB).
+pub fn downsample_unorm(rgba: &[u8], w: u32, h: u32) -> (Vec<u8>, u32, u32) {
+    let (w, h) = (w as usize, h as usize);
+    let (nw, nh) = ((w / 2).max(1), (h / 2).max(1));
+    let mut out = vec![0u8; nw * nh * 4];
+    let fill_row = |y: usize, dst: &mut [u8]| {
+        for x in 0..nw {
+            let mut s = [0u32; 4];
+            for dy in 0..2 {
+                let sy = (y * 2 + dy).min(h - 1);
+                for dx in 0..2 {
+                    let o = (sy * w + (x * 2 + dx).min(w - 1)) * 4;
+                    for (k, v) in s.iter_mut().enumerate() {
+                        *v += rgba[o + k] as u32;
+                    }
+                }
+            }
+            for k in 0..4 {
+                dst[x * 4 + k] = ((s[k] + 2) / 4) as u8;
+            }
+        }
+    };
+    if nw * nh >= 65536 {
+        use rayon::prelude::*;
+        out.par_chunks_mut(nw * 4).enumerate().for_each(|(y, dst)| fill_row(y, dst));
+    } else {
+        for (y, dst) in out.chunks_mut(nw * 4).enumerate() {
+            fill_row(y, dst);
+        }
+    }
+    (out, nw as u32, nh as u32)
+}
+
 /// The alpha test of `[matl_alpha] 1` (`shader.wgsl` ALPHA_REF = 128.5/255): a texel is
 /// drawn when its alpha is greater than this.
 pub const ALPHA_REF: u8 = 128;

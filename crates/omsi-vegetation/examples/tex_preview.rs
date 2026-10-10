@@ -3,8 +3,14 @@
 //! `tex_preview bark <out.png> [--size 512]`
 //! `tex_preview leaves <out.png> [--size 1024] [--arch <Name>]`
 //! `tex_preview seasons <out.png> [--size 512]`
+//! `tex_preview mips <out.png> [--size 1024]`
 
 use glam::{Vec2, Vec3};
+use omsi_texture::bc::{self, Bc};
+use omsi_texture::gpu::{
+    prepare_vegetation_data_with, prepare_vegetation_with, GpuOptions, PixelFormat, TextureData,
+};
+use omsi_texture::Image;
 use omsi_vegetation::classify::Archetype;
 use omsi_vegetation::generator::leaves::HULL;
 use omsi_vegetation::tex::bark::{bark, BarkTextures};
@@ -35,6 +41,7 @@ fn usage(msg: &str) -> ! {
     eprintln!("usage: tex_preview bark <out.png> [--size 512]");
     eprintln!("       tex_preview leaves <out.png> [--size 1024] [--arch <Name>]");
     eprintln!("       tex_preview seasons <out.png> [--size 512]");
+    eprintln!("       tex_preview mips <out.png> [--size 1024]");
     std::process::exit(2);
 }
 
@@ -415,12 +422,149 @@ fn run_seasons(args: &[String]) {
         .unwrap_or_else(|e| usage(&format!("cannot write {out}: {e}")));
 }
 
+const MC: usize = 160;
+const MIP_LEVELS: usize = 7;
+
+fn decoded(t: &TextureData, l: usize) -> Vec<u8> {
+    let side = (t.width >> l).max(1);
+    match t.format {
+        PixelFormat::Bc3 => bc::decode(&t.levels[l], side, side, Bc::Bc3),
+        _ => t.levels[l].clone(),
+    }
+}
+
+fn kib(ts: &[&TextureData]) -> usize {
+    ts.iter().map(|t| t.cpu_bytes()).sum::<usize>() / 1024
+}
+
+/// Mip sheet: per leaf archetype the decoded BC3 chain (levels 0..=6) over sky by alpha test,
+/// then the memory and time of the textures at the High and Low sizes.
+fn run_mips(args: &[String]) {
+    let Some(out) = args.first() else {
+        usage("missing <out.png>");
+    };
+    let mut size = 1024u32;
+    let mut it = args[1..].iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--size" => {
+                size = it
+                    .next()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or_else(|| usage("bad --size"));
+            }
+            _ => usage(&format!("unknown option: {a}")),
+        }
+    }
+    if size < 128 || !size.is_power_of_two() {
+        usage("--size must be a power of two >= 128");
+    }
+    let rows: Vec<Archetype> = ROWS
+        .iter()
+        .copied()
+        .filter(|a| leaf_ref(*a).is_some())
+        .collect();
+    let (w, h) = (MIP_LEVELS * (MC + GAP) + GAP, rows.len() * (MC + GAP) + GAP);
+    let mut img = vec![128u8; w * h * 3];
+    let sky = [170u8, 200, 235];
+    let o = GpuOptions {
+        bc: true,
+        compress: true,
+    };
+    let mut lines = Vec::new();
+    for (r, a) in rows.iter().enumerate() {
+        let t = leaves(*a, size).expect("leaf archetype");
+        let src = Image {
+            rgba: t.albedo_alpha.clone(),
+            width: size,
+            height: size,
+            has_alpha: true,
+        };
+        let c0 = bc::alpha_coverage(&src.rgba);
+        let tex = prepare_vegetation_with(src.clone(), o);
+        let (mut plain, mut ps) = (src.rgba, size);
+        let (mut kept, mut pl) = (Vec::new(), Vec::new());
+        for l in 0..MIP_LEVELS {
+            if l > 0 {
+                plain = bc::downsample(&plain, ps, ps).0;
+                ps /= 2;
+            }
+            let px_ = decoded(&tex, l);
+            let side = ps as usize;
+            kept.push(format!("{:.3}", bc::alpha_coverage(&px_)));
+            let pd = bc::decode(&bc::encode(&plain, ps, ps, Bc::Bc3).0, ps, ps, Bc::Bc3);
+            pl.push(format!("{:.3}", bc::alpha_coverage(&pd)));
+            let (ox, oy) = (GAP + l * (MC + GAP), GAP + r * (MC + GAP));
+            for y in 0..MC {
+                for x in 0..MC {
+                    let p = &px_[((y * side / MC) * side + x * side / MC) * 4..][..4];
+                    let o = ((oy + y) * w + ox + x) * 3;
+                    let c = if p[3] > bc::ALPHA_REF {
+                        [p[0], p[1], p[2]]
+                    } else {
+                        sky
+                    };
+                    img[o..o + 3].copy_from_slice(&c);
+                }
+            }
+        }
+        lines.push(format!(
+            "row {r}: {a:?} c0 {c0:.3} kept [{}] plain [{}]",
+            kept.join(" "),
+            pl.join(" ")
+        ));
+    }
+    image::save_buffer(out, &img, w as u32, h as u32, image::ColorType::Rgb8)
+        .unwrap_or_else(|e| usage(&format!("cannot write {out}: {e}")));
+    lines.iter().for_each(|l| println!("{l}"));
+    for (name, leaf_size, bark_size) in [("High", 1024u32, 512u32), ("Low", 512, 256)] {
+        println!("{name} (leaf {leaf_size}, bark {bark_size}):");
+        let mut sum = 0;
+        for a in &rows {
+            let t0 = Instant::now();
+            let b = bark(*a, bark_size).expect("archetype has bark");
+            let bi = |rgba: &[u8]| Image {
+                rgba: rgba.to_vec(),
+                width: bark_size,
+                height: bark_size,
+                has_alpha: true,
+            };
+            let (b1, b2) = (
+                prepare_vegetation_data_with(bi(&b.albedo_height), true, o),
+                prepare_vegetation_data_with(bi(&b.normal_rough_ao), false, o),
+            );
+            let bms = t0.elapsed().as_millis();
+            let t0 = Instant::now();
+            let l = leaves(*a, leaf_size).expect("leaf archetype");
+            let li = |rgba: &[u8]| Image {
+                rgba: rgba.to_vec(),
+                width: leaf_size,
+                height: leaf_size,
+                has_alpha: true,
+            };
+            let (l1, l2) = (
+                prepare_vegetation_with(li(&l.albedo_alpha), o),
+                prepare_vegetation_data_with(li(&l.normal_rough_trans), false, o),
+            );
+            let lms = t0.elapsed().as_millis();
+            let (bk, lk) = (kib(&[&b1, &b2]), kib(&[&l1, &l2]));
+            sum += bk + lk;
+            println!(
+                "{a:?}: bark {bms} ms {bk} KiB (2 maps), leaves {lms} ms {lk} KiB (2 maps), total {} KiB",
+                bk + lk
+            );
+        }
+        println!("{name} sum over archetypes: {sum} KiB");
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("bark") => run_bark(&args[1..]),
         Some("leaves") => run_leaves(&args[1..]),
         Some("seasons") => run_seasons(&args[1..]),
+        Some("mips") => run_mips(&args[1..]),
         Some(other) => usage(&format!("unknown subcommand: {other}")),
         None => usage("missing subcommand"),
     }

@@ -11,3 +11,4 @@ glam.workspace = true
 
 [dev-dependencies]
 image.workspace = true
+omsi-texture = { path = "../omsi-texture" }

@@ -256,13 +256,38 @@ pub fn prepare_vegetation(img: Image) -> TextureData {
 
 /// [`prepare_vegetation`] under the given options.
 pub fn prepare_vegetation_with(img: Image, o: GpuOptions) -> TextureData {
+    vegetation_chain(img, o, true, bc::downsample, true)
+}
+
+/// A vegetation data map for the GPU: a full mip chain made here with the alpha kept as
+/// data (height, normal.x), BC3 where the device takes block formats and the sides are
+/// multiples of four (never BC1: alpha is data), RGBA levels otherwise. `srgb_rgb`: the RGB
+/// is an sRGB colour (bark albedo + height) and is filtered in linear light like
+/// [`bc::downsample`]; otherwise all channels are data and use [`bc::downsample_unorm`].
+/// Normals are not renormalised per level: the box-averaged xy shorten, so a normal map
+/// goes flatter with distance (the shader rebuilds z).
+pub fn prepare_vegetation_data(img: Image, srgb_rgb: bool) -> TextureData {
+    prepare_vegetation_data_with(img, srgb_rgb, gpu_options())
+}
+
+/// [`prepare_vegetation_data`] under the given options.
+pub fn prepare_vegetation_data_with(img: Image, srgb_rgb: bool, o: GpuOptions) -> TextureData {
+    vegetation_chain(img, o, false, if srgb_rgb { bc::downsample } else { bc::downsample_unorm }, false)
+}
+
+/// A mip filter: the next level of a picture and its size.
+type MipFilter = fn(&[u8], u32, u32) -> (Vec<u8>, u32, u32);
+
+/// The shared mip loop of the vegetation textures. `coverage`: scale each level's alpha to
+/// the coverage of level 0; `allow_bc1`: an opaque picture may go up as BC1.
+fn vegetation_chain(img: Image, o: GpuOptions, coverage: bool, filter: MipFilter, allow_bc1: bool) -> TextureData {
     let (w, h) = (img.width.max(1), img.height.max(1));
     let opaque = !img.has_alpha || img.rgba.chunks_exact(4).all(|p| p[3] == 255);
     let c0 = bc::alpha_coverage(&img.rgba);
     let block = o.bc && o.compress && w % 4 == 0 && h % 4 == 0;
     let format = if !block {
         PixelFormat::Rgba8
-    } else if opaque {
+    } else if opaque && allow_bc1 {
         PixelFormat::Bc1
     } else {
         PixelFormat::Bc3
@@ -273,9 +298,9 @@ pub fn prepare_vegetation_with(img: Image, o: GpuOptions) -> TextureData {
     // The chain is made from the unscaled levels, so the scales do not compound.
     let (mut cur, mut cw, mut ch) = (img.rgba, w, h);
     for _ in 1..mip_count(w, h) {
-        let (next, nw, nh) = bc::downsample(&cur, cw, ch);
+        let (next, nw, nh) = filter(&cur, cw, ch);
         let mut out = next.clone();
-        if !opaque {
+        if coverage && !opaque {
             bc::scale_alpha_to_coverage(&mut out, c0);
         }
         levels.push(emit(out, nw, nh));
@@ -496,6 +521,54 @@ mod tests {
         let img = leaf(256, false);
         let t = prepare_vegetation_with(img.clone(), GpuOptions { bc: false, compress: false });
         assert_eq!(t.levels[0], img.rgba);
+    }
+
+    #[test]
+    fn vegetation_data_keeps_alpha() {
+        let mut rgba = Vec::new();
+        for _y in 0..64u32 {
+            for x in 0..64u32 {
+                rgba.extend_from_slice(&[10, 20, 30, (x * 4) as u8]);
+            }
+        }
+        let t = prepare_vegetation_data_with(Image { rgba: rgba.clone(), width: 64, height: 64, has_alpha: true }, false, GpuOptions { bc: false, compress: false });
+        assert!(t.has_alpha && !t.gpu_mips);
+        for y in 0..32usize {
+            for x in 0..32usize {
+                let sum: u32 = [(0, 0), (1, 0), (0, 1), (1, 1)].iter().map(|(dx, dy)| rgba[((y * 2 + dy) * 64 + x * 2 + dx) * 4 + 3] as u32).sum();
+                let got = t.levels[1][(y * 32 + x) * 4 + 3] as i32;
+                assert!((got - (sum as f32 / 4.0).round() as i32).abs() <= 1, "({x},{y}): {got}");
+            }
+        }
+    }
+
+    #[test]
+    fn vegetation_data_unorm_filter() {
+        let mut rgba = Vec::new();
+        for y in 0..16u32 {
+            for x in 0..16u32 {
+                let v = if (x + y) % 2 == 0 { 255 } else { 0 };
+                rgba.extend_from_slice(&[v, 0, 0, 255]);
+            }
+        }
+        let img = Image { rgba, width: 16, height: 16, has_alpha: true };
+        let o = GpuOptions { bc: false, compress: false };
+        let r = prepare_vegetation_data_with(img.clone(), false, o).levels[1][0] as i32;
+        assert!((r - 128).abs() <= 1, "{r}");
+        let want = bc::downsample(&img.rgba, 16, 16).0[0] as i32;
+        assert_eq!(prepare_vegetation_data_with(img, true, o).levels[1][0] as i32, want);
+        assert!((want - 188).abs() <= 2, "{want}");
+    }
+
+    #[test]
+    fn vegetation_data_bc3_even_if_opaque() {
+        let t = prepare_vegetation_data_with(leaf(64, true), false, GpuOptions { bc: true, compress: true });
+        assert_eq!(t.format, PixelFormat::Bc3);
+        assert_eq!(t.levels.len(), mip_count(64, 64) as usize);
+        for (i, l) in t.levels.iter().enumerate() {
+            let s = (64u32 >> i).max(1);
+            assert_eq!(l.len(), PixelFormat::Bc3.level_bytes(s, s));
+        }
     }
 
     fn dds(fourcc: &[u8; 4], w: u32, h: u32, mips: u32, blocks: &[u8]) -> Vec<u8> {
