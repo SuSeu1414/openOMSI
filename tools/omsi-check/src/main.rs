@@ -14,7 +14,7 @@ struct Args {
     /// Path to the OMSI 2 installation (the folder containing OMSI).
     root: PathBuf,
     /// Only run the named checks (o3d, scripts, models, scenery, vehicles, maps, misc,
-    /// textures, fleet). `fleet` is not part of the default set.
+    /// textures, fleet, trees). `fleet` and `trees` are not part of the default set.
     #[arg(long)]
     only: Vec<String>,
     /// Print every error instead of a summary.
@@ -46,10 +46,14 @@ struct Args {
     /// a texture of that folder.
     #[arg(long, num_args = 2)]
     resolve: Vec<String>,
+    /// `trees`: also write the inventory as CSV to this file.
+    #[arg(long)]
+    trees_out: Option<PathBuf>,
 }
 
 mod dump;
 mod fleet;
+mod trees;
 
 fn files_with_ext(root: &Path, exts: &[&str]) -> Vec<PathBuf> {
     WalkDir::new(root)
@@ -256,6 +260,9 @@ fn main() -> Result<()> {
     }
     if args.only.iter().any(|o| o == "fleet") {
         fleet::check_fleet(&root, &content, args.vehicles.as_deref(), args.run, args.verbose);
+    }
+    if args.only.iter().any(|o| o == "trees") {
+        trees::inventory(&root, args.trees_out.as_deref(), args.verbose);
     }
     let want = |n: &str| args.only.is_empty() || args.only.iter().any(|o| o == n);
     if want("o3d") {

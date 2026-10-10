@@ -46,6 +46,7 @@ Plain cargo works too: `cargo build --release -p omsi-app` builds `target/releas
   (`openomsi-launcher --cli maps`, `--cli install '{"path":"mod.zip"}'` …).
 * `omsi-check` (`tools/omsi-check`) - loads every content file of an installation and reports
   what failed: `cargo run --release -p omsi-check -- "/path/to/OMSI 2"`.
+  `--only trees --trees-out trees.csv` lists the trees and plants placed on each map.
 
 ## Icons
 
