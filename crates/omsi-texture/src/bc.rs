@@ -693,6 +693,57 @@ pub fn downsample(rgba: &[u8], w: u32, h: u32) -> (Vec<u8>, u32, u32) {
     (out, nw as u32, nh as u32)
 }
 
+/// The alpha test of `[matl_alpha] 1` (`shader.wgsl` ALPHA_REF = 128.5/255): a texel is
+/// drawn when its alpha is greater than this.
+pub const ALPHA_REF: u8 = 128;
+
+/// Share (0..=1) of the texels of an RGBA picture that pass the alpha test (a > ALPHA_REF).
+pub fn alpha_coverage(rgba: &[u8]) -> f32 {
+    let n = rgba.len() / 4;
+    if n == 0 {
+        return 0.0;
+    }
+    let pass = rgba.chunks_exact(4).filter(|p| p[3] > ALPHA_REF).count();
+    pass as f32 / n as f32
+}
+
+/// Scale the alpha of an RGBA picture (colour untouched) so that the share of texels
+/// passing the alpha test is as close as it can get to `coverage` (Castano 2010,
+/// coverage-preserving mips). Returns the scale used (1.0 = untouched).
+pub fn scale_alpha_to_coverage(rgba: &mut [u8], coverage: f32) -> f32 {
+    let n = rgba.len() / 4;
+    if n == 0 {
+        return 1.0;
+    }
+    let want = (coverage.clamp(0.0, 1.0) * n as f32).round() as usize;
+    let mut hist = [0usize; 256];
+    for p in rgba.chunks_exact(4) {
+        hist[p[3] as usize] += 1;
+    }
+    if want == 0 || hist[255] == n {
+        return 1.0;
+    }
+    // the alpha threshold t whose count of texels with a >= t is nearest to `want`;
+    // a tie takes the larger `above` (more coverage: losing the crown is the failure),
+    // and among equal `above` the larger t (the smaller scale)
+    let (mut above, mut best_t, mut best_d, mut best_above) = (0usize, 255usize, usize::MAX, 0usize);
+    for t in (1..=255usize).rev() {
+        above += hist[t];
+        let d = above.abs_diff(want);
+        if d < best_d || (d == best_d && above > best_above) {
+            (best_t, best_d, best_above) = (t, d, above);
+        }
+    }
+    let s = (ALPHA_REF as f32 + 1.0) / best_t as f32;
+    if (s - 1.0).abs() < 1e-6 {
+        return 1.0;
+    }
+    for p in rgba.chunks_exact_mut(4) {
+        p[3] = ((p[3] as f32 * s + 0.5) as u32).min(255) as u8;
+    }
+    s
+}
+
 /// Resample an RGBA picture to `nw` x `nh` with a Catmull-Rom filter (the texel centres
 /// keep their places in texture space, so a picture resized by a texel or two looks the
 /// same where it is drawn; the filter keeps its sharpness).
@@ -907,6 +958,62 @@ mod tests {
         assert_eq!((w, h), (1, 1));
         assert!((d[0] as i32 - 188).abs() <= 1, "{}", d[0]);
         assert_eq!(d[3], 255);
+    }
+
+    #[test]
+    fn alpha_coverage_counts_greater_than_ref() {
+        let rgba: Vec<u8> = [0u8, 128, 129, 255].iter().flat_map(|&a| [9, 9, 9, a]).collect();
+        assert_eq!(alpha_coverage(&rgba), 0.5);
+    }
+
+    #[test]
+    fn scale_alpha_hits_the_target_exactly() {
+        let src: Vec<u8> = (0..64 * 64).flat_map(|i| [i as u8, 7, 200, ((i % 64) * 4) as u8]).collect();
+        for target in [0.1f32, 0.25, 0.5, 0.9] {
+            let mut p = src.clone();
+            scale_alpha_to_coverage(&mut p, target);
+            let cov = alpha_coverage(&p);
+            assert!((cov - target).abs() <= 1.0 / 64.0, "{target}: {cov}");
+            assert!(p.chunks_exact(4).zip(src.chunks_exact(4)).all(|(a, b)| a[..3] == b[..3]));
+        }
+    }
+
+    #[test]
+    fn scale_alpha_tie_keeps_coverage() {
+        let mut p: Vec<u8> = (0..64).flat_map(|i| [0, 0, 0, if i < 32 { 0 } else { 32 }]).collect();
+        let s = scale_alpha_to_coverage(&mut p, 0.25);
+        assert_eq!(s, 129.0 / 32.0);
+        assert_eq!(alpha_coverage(&p), 0.5);
+    }
+
+    #[test]
+    fn scale_alpha_leaves_opaque_and_empty_alone() {
+        let opaque = vec![10u8, 20, 30, 255].repeat(16);
+        let mut p = opaque.clone();
+        assert_eq!(scale_alpha_to_coverage(&mut p, 0.5), 1.0);
+        assert_eq!(p, opaque);
+        let mut q: Vec<u8> = (0..16).flat_map(|i| [1, 2, 3, i as u8 * 16]).collect();
+        let before = q.clone();
+        assert_eq!(scale_alpha_to_coverage(&mut q, 0.0), 1.0);
+        assert_eq!(q, before);
+    }
+
+    #[test]
+    fn downsampled_leaf_keeps_its_coverage() {
+        let mut plain: Vec<u8> = (0..256 * 256).flat_map(|i| [60, 120, 40, if (i % 256 + i / 256) % 13 < 2 { 255 } else { 0 }]).collect();
+        let (mut w, mut h) = (256u32, 256u32);
+        let c0 = alpha_coverage(&plain);
+        let mut line = Vec::new();
+        for _ in 0..4 {
+            (plain, w, h) = downsample(&plain, w, h);
+            let mut level = plain.clone();
+            scale_alpha_to_coverage(&mut level, c0);
+            let (before, after) = (alpha_coverage(&plain), alpha_coverage(&level));
+            line.push(format!("{w}x{h}: plain {before:.3} scaled {after:.3}"));
+            assert!((after - c0).abs() <= 0.02, "{line:?}");
+        }
+        assert!(alpha_coverage(&plain) < 0.5 * c0, "{line:?}");
+        eprintln!("c0 {c0:.3}; {line:?}");
     }
 
     #[test]
