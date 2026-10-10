@@ -115,4 +115,21 @@ pub struct TreeParams {
     pub leader_length: f32,
     /// Tropism of fork leaders (level 0 with a parent), like `attraction_up`.
     pub leader_up: f32,
+    pub leaves: LeafParams,
+}
+
+/// Twig-cluster cards on the outermost stems.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LeafParams {
+    /// Card height (base to tip) in m; the card is square before the hull crop.
+    pub size: f32,
+    /// Distance between cards along a twig, as a fraction of `size`.
+    pub spacing: f32,
+    /// Fraction of the twig length where cards start.
+    pub start: f32,
+    /// Degrees between the twig heading and the card axis.
+    pub angle: f32,
+    pub angle_v: f32,
+    /// 0..1: 0 = card faces out of the crown, 1 = card faces up.
+    pub up: f32,
 }

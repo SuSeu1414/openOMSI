@@ -1,15 +1,16 @@
 //! Developer tool: renders generated trees (front, side, top) to a PNG with a CPU rasteriser.
 //!
 //! `tree_preview <archetype> <height> <width> <out.png> [--seeds N] [--seed0 S]
-//!  [--min-radius R] [--size PX]`
+//!  [--min-radius R] [--size PX] [--no-leaves]`
 
 use glam::{Vec2, Vec3};
 use omsi_vegetation::classify::Archetype;
-use omsi_vegetation::generator::{skeleton, tubes, Target, TubeOptions};
+use omsi_vegetation::generator::{leaves, skeleton, tubes, Target, TubeOptions};
 use omsi_vegetation::presets::preset;
 
 const BG: [u8; 3] = [205, 214, 224];
 const BARK: [f32; 3] = [110.0, 80.0, 55.0];
+const LEAF: [f32; 3] = [70.0, 120.0, 50.0];
 const RED: [u8; 3] = [220, 40, 40];
 
 struct Canvas {
@@ -37,7 +38,7 @@ fn usage(msg: &str) -> ! {
     eprintln!("error: {msg}");
     eprintln!(
         "usage: tree_preview <archetype> <height> <width> <out.png> [--seeds N] [--seed0 S] \
-         [--min-radius R] [--size PX]"
+         [--min-radius R] [--size PX] [--no-leaves]"
     );
     std::process::exit(2);
 }
@@ -64,7 +65,9 @@ fn main() {
     let width: f32 = num(&args[2], "width");
     let out = &args[3];
     let (mut seeds, mut seed0, mut min_radius, mut size) = (3u32, 1u64, 0.0f32, 512usize);
-    let mut it = args[4..].iter();
+    let no_leaves = args[4..].iter().any(|a| a == "--no-leaves");
+    let rest: Vec<&String> = args[4..].iter().filter(|a| *a != "--no-leaves").collect();
+    let mut it = rest.into_iter();
     while let Some(k) = it.next() {
         let v = it
             .next()
@@ -97,18 +100,23 @@ fn main() {
         let seed = seed0 + j as u64;
         let sk = skeleton(&p, Target { height, width }, seed);
         let mesh = tubes(&sk, &opts);
+        let leaf = if no_leaves {
+            Default::default()
+        } else {
+            leaves(&sk, &p.leaves, seed)
+        };
         let mut cnt = [0usize; 4];
         for s in &sk.stems {
             cnt[(s.level as usize).min(3)] += 1;
         }
         let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
-        for &v in &mesh.positions {
+        for &v in mesh.positions.iter().chain(&leaf.positions) {
             lo = lo.min(v);
             hi = hi.max(v);
         }
         println!(
-            "seed {seed}: stems L0/L1/L2/L3 = {}/{}/{}/{}, triangles {}, bbox min ({:.2},{:.2},{:.2}) max ({:.2},{:.2},{:.2})",
-            cnt[0], cnt[1], cnt[2], cnt[3], mesh.triangles(), lo.x, lo.y, lo.z, hi.x, hi.y, hi.z
+            "seed {seed}: stems L0/L1/L2/L3 = {}/{}/{}/{}, triangles {}, cards {}, bbox min ({:.2},{:.2},{:.2}) max ({:.2},{:.2},{:.2})",
+            cnt[0], cnt[1], cnt[2], cnt[3], mesh.triangles(), leaf.positions.len() / 8, lo.x, lo.y, lo.z, hi.x, hi.y, hi.z
         );
 
         let row_y = j as usize * size;
@@ -130,36 +138,38 @@ fn main() {
                 Vec3::new(origin.x + h * scale, origin.y - u * scale, d)
             };
             let mut depth = vec![f32::MAX; size * size];
-            for t in mesh.indices.as_chunks::<3>().0 {
-                let w = t.map(|i| mesh.positions[i as usize]);
-                let n = (w[1] - w[0]).cross(w[2] - w[0]).normalize_or_zero();
-                let k = 0.25 + 0.75 * n.dot(light).abs();
-                let col = BARK.map(|c| (c * k).round().clamp(0.0, 255.0) as u8);
-                let s = w.map(proj);
-                let area = edge(s[0], s[1], s[2]);
-                if area.abs() < 1e-9 {
-                    continue;
-                }
-                let lo = s[0].min(s[1]).min(s[2]);
-                let hi = s[0].max(s[1]).max(s[2]);
-                let x0 = lo.x.floor().max(px0) as i32;
-                let x1 = hi.x.ceil().min(px0 + pxf - 1.0) as i32;
-                let y0 = lo.y.floor().max(py0) as i32;
-                let y1 = hi.y.ceil().min(py0 + pxf - 1.0) as i32;
-                for y in y0..=y1 {
-                    for x in x0..=x1 {
-                        let c = Vec3::new(x as f32 + 0.5, y as f32 + 0.5, 0.0);
-                        let w0 = edge(s[1], s[2], c) / area;
-                        let w1 = edge(s[2], s[0], c) / area;
-                        let w2 = edge(s[0], s[1], c) / area;
-                        if w0 < 0.0 || w1 < 0.0 || w2 < 0.0 {
-                            continue;
-                        }
-                        let z = w0 * s[0].z + w1 * s[1].z + w2 * s[2].z;
-                        let di = (y - row_y as i32) as usize * size + (x - px0 as i32) as usize;
-                        if z < depth[di] {
-                            depth[di] = z;
-                            cv.put(x, y, col);
+            for (m, base) in [(&mesh, BARK), (&leaf, LEAF)] {
+                for t in m.indices.as_chunks::<3>().0 {
+                    let w = t.map(|i| m.positions[i as usize]);
+                    let n = (w[1] - w[0]).cross(w[2] - w[0]).normalize_or_zero();
+                    let k = 0.25 + 0.75 * n.dot(light).abs();
+                    let col = base.map(|c| (c * k).round().clamp(0.0, 255.0) as u8);
+                    let s = w.map(proj);
+                    let area = edge(s[0], s[1], s[2]);
+                    if area.abs() < 1e-9 {
+                        continue;
+                    }
+                    let lo = s[0].min(s[1]).min(s[2]);
+                    let hi = s[0].max(s[1]).max(s[2]);
+                    let x0 = lo.x.floor().max(px0) as i32;
+                    let x1 = hi.x.ceil().min(px0 + pxf - 1.0) as i32;
+                    let y0 = lo.y.floor().max(py0) as i32;
+                    let y1 = hi.y.ceil().min(py0 + pxf - 1.0) as i32;
+                    for y in y0..=y1 {
+                        for x in x0..=x1 {
+                            let c = Vec3::new(x as f32 + 0.5, y as f32 + 0.5, 0.0);
+                            let w0 = edge(s[1], s[2], c) / area;
+                            let w1 = edge(s[2], s[0], c) / area;
+                            let w2 = edge(s[0], s[1], c) / area;
+                            if w0 < 0.0 || w1 < 0.0 || w2 < 0.0 {
+                                continue;
+                            }
+                            let z = w0 * s[0].z + w1 * s[1].z + w2 * s[2].z;
+                            let di = (y - row_y as i32) as usize * size + (x - px0 as i32) as usize;
+                            if z < depth[di] {
+                                depth[di] = z;
+                                cv.put(x, y, col);
+                            }
                         }
                     }
                 }
