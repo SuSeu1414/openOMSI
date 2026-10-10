@@ -7,7 +7,7 @@ use glam::{Vec2, Vec3};
 use omsi_vegetation::classify::Archetype;
 use omsi_vegetation::generator::leaves::HULL;
 use omsi_vegetation::tex::bark::{bark, BarkTextures};
-use omsi_vegetation::tex::leaves::{atlas_uv, leaves, LeafTextures, TILES};
+use omsi_vegetation::tex::leaves::{atlas_uv, leaf_ref, leaves, LeafTextures, TILES};
 use std::time::Instant;
 
 const C: usize = 256;
@@ -292,17 +292,17 @@ fn run_leaves(args: &[String]) {
     let rows: Vec<Archetype> = ROWS
         .iter()
         .copied()
-        .filter(|a| leaves(*a, 128).is_some())
+        .filter(|a| leaf_ref(*a).is_some())
         .filter(|a| only.as_ref().is_none_or(|n| *n == format!("{a:?}")))
         .collect();
     if rows.is_empty() {
-        usage("no broadleaf archetype matches --arch");
+        usage("no leaf archetype matches --arch");
     }
     let (w, h) = (6 * (LC + GAP) + GAP, rows.len() * (LC + GAP) + GAP);
     let mut img = vec![128u8; w * h * 3];
     for (r, a) in rows.iter().enumerate() {
         let t0 = Instant::now();
-        let t = leaves(*a, size).expect("broadleaf archetype");
+        let t = leaves(*a, size).expect("leaf archetype");
         let ms = t0.elapsed().as_millis();
         let fl = fills(&t).map(|v| format!("{v:.2}"));
         println!("row {r}: {a:?} {ms} ms fill [{}]", fl.join(" "));

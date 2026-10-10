@@ -1,9 +1,10 @@
 //! Procedural leaf atlas per archetype (broadleaf kinds): 2x2 tiles of twig clusters drawn
 //! inside the fixed card outline `generator::leaves::HULL`. Pure data, deterministic.
 
+use super::leaf_raster::{hull_dist, lin, mix3, rot, smoothstep, Cap, Layer, Texel, SUB};
+use super::needles::{needle_style, needle_tile};
 use super::ops::{dilate, encode_normal, unorm8};
 use crate::classify::Archetype;
-use crate::generator::leaves::HULL;
 use crate::seed::{splitmix64, Rng};
 use glam::{Vec2, Vec3};
 use std::f32::consts::{PI, TAU};
@@ -149,33 +150,9 @@ fn style(a: Archetype) -> Option<Style> {
 
 /// The summer reference colour of the leaf top (sRGB) — the palette's `ref` in 024.
 pub fn leaf_ref(a: Archetype) -> Option<[u8; 3]> {
-    style(a).map(|s| s.leaf)
-}
-
-fn lin(c: [u8; 3]) -> [f32; 3] {
-    c.map(|v| (v as f32 / 255.0).powf(2.2))
-}
-
-fn smoothstep(a: f32, b: f32, x: f32) -> f32 {
-    let t = ((x - a) / (b - a)).clamp(0.0, 1.0);
-    t * t * (3.0 - 2.0 * t)
-}
-
-fn mix3(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
-    [0, 1, 2].map(|i| a[i] + (b[i] - a[i]) * t)
-}
-
-/// Signed distance to the nearest hull edge line (card units): >= 0 inside, exact inside,
-/// a lower bound of the distance outside.
-fn hull_dist(p: Vec2) -> f32 {
-    let n = HULL.len();
-    (0..n)
-        .map(|i| {
-            let (a, b) = (HULL[i], HULL[(i + 1) % n]);
-            let e = b - a;
-            e.perp_dot(p - a) / e.length()
-        })
-        .fold(f32::MAX, f32::min)
+    style(a)
+        .map(|s| s.leaf)
+        .or_else(|| needle_style(a).map(|s| s.needle))
 }
 
 fn shape_w(s: &Style, t: f32) -> f32 {
@@ -191,124 +168,6 @@ fn shape_w(s: &Style, t: f32) -> f32 {
     s.w * w
 }
 
-/// One painted texel.
-struct Texel {
-    col: [f32; 3],
-    h: f32,
-    rough: f32,
-    trans: f32,
-}
-
-const SUB: usize = 4;
-
-/// Per-tile float layers, premultiplied by coverage (`over` compositing).
-struct Layer {
-    t: usize,
-    a: Vec<f32>,
-    col: Vec<[f32; 3]>,
-    h: Vec<f32>,
-    rough: Vec<f32>,
-    trans: Vec<f32>,
-}
-
-impl Layer {
-    fn new(t: usize) -> Layer {
-        Layer {
-            t,
-            a: vec![0.0; t * t],
-            col: vec![[0.0; 3]; t * t],
-            h: vec![0.0; t * t],
-            rough: vec![0.0; t * t],
-            trans: vec![0.0; t * t],
-        }
-    }
-
-    /// Card space of a position in tile pixels.
-    fn card_at(&self, x: f32, y: f32) -> Vec2 {
-        let k = 1.0 - 2.0 * MARGIN;
-        let t = self.t as f32;
-        Vec2::new((x / t - MARGIN) / k, 1.0 - (y / t - MARGIN) / k)
-    }
-
-    fn px_of(&self, c: Vec2) -> Vec2 {
-        atlas_uv(c, 0) * TILES as f32 * self.t as f32
-    }
-
-    /// Coverage by 4x4 subsamples of `inside` per pixel of the card-space box `lo..hi`.
-    fn paint(
-        &mut self,
-        (lo, hi): (Vec2, Vec2),
-        inside: &dyn Fn(Vec2) -> bool,
-        shade: &dyn Fn(Vec2) -> Texel,
-    ) {
-        let (pa, pb) = (self.px_of(lo), self.px_of(hi));
-        let t = self.t as i32;
-        let x0 = (pa.x.min(pb.x).floor() as i32).clamp(0, t);
-        let x1 = (pa.x.max(pb.x).ceil() as i32).clamp(0, t);
-        let y0 = (pa.y.min(pb.y).floor() as i32).clamp(0, t);
-        let y1 = (pa.y.max(pb.y).ceil() as i32).clamp(0, t);
-        for y in y0..y1 {
-            for x in x0..x1 {
-                let mut n = 0;
-                for j in 0..SUB {
-                    for i in 0..SUB {
-                        let (sx, sy) = (
-                            x as f32 + (i as f32 + 0.5) / SUB as f32,
-                            y as f32 + (j as f32 + 0.5) / SUB as f32,
-                        );
-                        n += inside(self.card_at(sx, sy)) as u32;
-                    }
-                }
-                if n == 0 {
-                    continue;
-                }
-                let an = n as f32 / (SUB * SUB) as f32;
-                let tx = shade(self.card_at(x as f32 + 0.5, y as f32 + 0.5));
-                let i = y as usize * self.t + x as usize;
-                let keep = 1.0 - an;
-                for c in 0..3 {
-                    self.col[i][c] = tx.col[c] * an + self.col[i][c] * keep;
-                }
-                self.h[i] = tx.h * an + self.h[i] * keep;
-                self.rough[i] = tx.rough * an + self.rough[i] * keep;
-                self.trans[i] = tx.trans * an + self.trans[i] * keep;
-                self.a[i] = an + self.a[i] * keep;
-            }
-        }
-    }
-}
-
-/// A tapered stem segment.
-struct Cap {
-    a: Vec2,
-    b: Vec2,
-    ra: f32,
-    rb: f32,
-}
-
-impl Cap {
-    /// Distance to the axis over the local radius (<= 1 inside).
-    fn rel(&self, p: Vec2) -> f32 {
-        let ab = self.b - self.a;
-        let t = ((p - self.a).dot(ab) / ab.length_squared().max(1e-12)).clamp(0.0, 1.0);
-        (p - (self.a + ab * t)).length() / (self.ra + (self.rb - self.ra) * t).max(1e-6)
-    }
-
-    fn bbox(&self) -> (Vec2, Vec2) {
-        let r = Vec2::splat(self.ra.max(self.rb));
-        (self.a.min(self.b) - r, self.a.max(self.b) + r)
-    }
-
-    fn draw(&self, l: &mut Layer, col: [f32; 3], h_axis: f32, h_edge: f32, rough: f32, tr: f32) {
-        l.paint(self.bbox(), &|p| self.rel(p) <= 1.0, &|p| Texel {
-            col,
-            h: h_axis + (h_edge - h_axis) * self.rel(p).min(1.0),
-            rough,
-            trans: tr,
-        });
-    }
-}
-
 struct Leaf {
     attach: Vec2,
     b: Vec2,
@@ -319,10 +178,6 @@ struct Leaf {
     tint: [f32; 3],
     rough: f32,
     key: f32,
-}
-
-fn rot(v: Vec2, a: f32) -> Vec2 {
-    Vec2::from_angle(a).rotate(v)
 }
 
 /// Leaf frame: s along the leaf (0 base, 1 tip), t across, both in units of the length.
@@ -577,21 +432,25 @@ fn pack_tile(l: &Layer) -> (Vec<[u8; 4]>, Vec<[u8; 4]>) {
     (alb, nrt)
 }
 
-/// `None` for `Archetype::None` and (until 023b) the needle archetypes. `size` a power of two
+/// `None` for `Archetype::None`. `size` a power of two
 /// >= 128. Deterministic (seed per archetype, `splitmix64(index ^ 0x1EAF)`).
 pub fn leaves(a: Archetype, size: u32) -> Option<LeafTextures> {
     assert!(
         size >= 128 && size.is_power_of_two(),
         "leaves: bad size {size}"
     );
-    let st = style(a)?;
+    let draw: Box<dyn Fn(u32, u64, usize) -> Layer> = match (style(a), needle_style(a)) {
+        (Some(st), _) => Box::new(move |tile, seed, t| tile_layer(&st, tile, seed, t)),
+        (None, Some(st)) => Box::new(move |tile, seed, t| needle_tile(&st, tile, seed, t)),
+        (None, None) => return None,
+    };
     let seed = splitmix64(a as u64 ^ 0x1EAF);
     let t = (size / TILES) as usize;
     let n = size as usize;
     let mut alb = vec![0u8; n * n * 4];
     let mut nrt = vec![0u8; n * n * 4];
     for tile in 0..TILES * TILES {
-        let (a_t, n_t) = pack_tile(&tile_layer(&st, tile, seed, t));
+        let (a_t, n_t) = pack_tile(&draw(tile, seed, t));
         let (ox, oy) = ((tile % TILES) as usize * t, (tile / TILES) as usize * t);
         for i in 0..t * t {
             let o = ((oy + i / t) * n + ox + i % t) * 4;
@@ -613,13 +472,16 @@ pub fn leaves(a: Archetype, size: u32) -> Option<LeafTextures> {
 mod tests {
     use super::*;
 
-    const BROAD: [Archetype; 6] = [
+    const NEEDLE: [Archetype; 2] = [Archetype::ConiferConical, Archetype::Pine];
+    const ALL: [Archetype; 8] = [
         Archetype::BroadleafWide,
         Archetype::BroadleafNarrow,
         Archetype::Birch,
         Archetype::Willow,
         Archetype::Shrub,
         Archetype::Hedge,
+        Archetype::ConiferConical,
+        Archetype::Pine,
     ];
     const S: u32 = 256;
 
@@ -637,19 +499,18 @@ mod tests {
 
     #[test]
     fn leaves_deterministic() {
-        for a in BROAD {
+        for a in ALL {
             let (x, y) = (leaves(a, S).unwrap(), leaves(a, S).unwrap());
             assert_eq!(x.albedo_alpha, y.albedo_alpha, "{a:?}");
             assert_eq!(x.normal_rough_trans, y.normal_rough_trans, "{a:?}");
         }
-        for a in [Archetype::None, Archetype::ConiferConical, Archetype::Pine] {
-            assert!(leaves(a, S).is_none());
-        }
+        assert!(leaves(Archetype::None, S).is_none());
+        assert!(leaf_ref(Archetype::None).is_none());
     }
 
     #[test]
     fn nothing_outside_hull() {
-        for a in BROAD {
+        for a in ALL {
             let t = leaves(a, S).unwrap();
             for y in 0..S {
                 for x in 0..S {
@@ -665,7 +526,7 @@ mod tests {
 
     #[test]
     fn hull_fill_in_range() {
-        for a in BROAD {
+        for a in ALL {
             let t = leaves(a, S).unwrap();
             let (mut hull, mut cov) = ([0u32; 4], [0u32; 4]);
             for y in 0..S {
@@ -680,10 +541,15 @@ mod tests {
             }
             for k in 0..4 {
                 let f = cov[k] as f32 / hull[k] as f32;
-                if k < 3 {
-                    assert!((0.35..=0.85).contains(&f), "{a:?} tile {k}: {f}");
+                let (lo, dense) = if NEEDLE.contains(&a) {
+                    (0.30, 0.55)
                 } else {
-                    assert!(f >= 0.60, "{a:?} dense tile: {f}");
+                    (0.35, 0.60)
+                };
+                if k < 3 {
+                    assert!((lo..=0.85).contains(&f), "{a:?} tile {k}: {f}");
+                } else {
+                    assert!(f >= dense, "{a:?} dense tile: {f}");
                 }
             }
         }
@@ -691,7 +557,7 @@ mod tests {
 
     #[test]
     fn no_black_under_alpha_zero() {
-        for a in BROAD {
+        for a in ALL {
             let t = leaves(a, S).unwrap();
             let (mut sum, mut n) = ([0f32; 3], 0f32);
             for p in t.albedo_alpha.chunks(4).filter(|p| p[3] > 0) {
@@ -712,7 +578,7 @@ mod tests {
 
     #[test]
     fn twig_is_opaque_wood() {
-        for a in BROAD {
+        for a in ALL {
             let t = leaves(a, 512).unwrap();
             let opaque: Vec<usize> = (0..512 * 512)
                 .filter(|&i| t.albedo_alpha[i * 4 + 3] == 255)
@@ -724,8 +590,41 @@ mod tests {
                 .sum::<f32>()
                 / opaque.len() as f32;
             assert!(wood, "{a:?}: no wood texel");
-            assert!(mean > 100.0, "{a:?}: mean translucency {mean}");
+            let min = if NEEDLE.contains(&a) { 60.0 } else { 100.0 };
+            assert!(mean > min, "{a:?}: mean translucency {mean}");
         }
+    }
+
+    /// Share of the opaque texels of tile 0 that have a transparent texel within 3 px.
+    fn thin_share(a: Archetype) -> f32 {
+        let t = leaves(a, 512).unwrap();
+        let alpha = |x: i32, y: i32| t.albedo_alpha[((y * 512 + x) * 4 + 3) as usize];
+        let (mut solid, mut thin) = (0u32, 0u32);
+        for y in 0..256i32 {
+            for x in 0..256i32 {
+                if alpha(x, y) <= 128 {
+                    continue;
+                }
+                solid += 1;
+                let near = (-3..=3).any(|dy: i32| {
+                    (-3..=3).any(|dx: i32| {
+                        let (u, v) = (x + dx, y + dy);
+                        (0..256).contains(&u) && (0..256).contains(&v) && alpha(u, v) == 0
+                    })
+                });
+                thin += near as u32;
+            }
+        }
+        thin as f32 / solid as f32
+    }
+
+    #[test]
+    fn needles_are_thin() {
+        let n = thin_share(Archetype::ConiferConical);
+        let b = thin_share(Archetype::BroadleafWide);
+        assert!(n >= 0.30, "spruce thin share {n}");
+        // Leaf tips and edges are thin too: BW measures 0.39, so only require a wide gap.
+        assert!(b < 0.45 && n > b + 0.3, "broadleaf thin share {b}");
     }
 
     #[test]

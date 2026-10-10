@@ -3,7 +3,9 @@
 //! texture built from it tiles without a seam. `bark` builds the per-archetype bark maps.
 
 pub mod bark;
+mod leaf_raster;
 pub mod leaves;
+mod needles;
 pub mod noise;
 pub mod ops;
 
