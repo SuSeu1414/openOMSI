@@ -2,6 +2,7 @@
 
 mod bake;
 pub mod leaves;
+pub mod lod;
 pub mod mesh;
 pub mod params;
 mod rings;
@@ -10,6 +11,7 @@ pub mod tube;
 
 pub use bake::Crown;
 pub use leaves::*;
+pub use lod::*;
 pub use mesh::*;
 pub use params::*;
 pub use skeleton::*;

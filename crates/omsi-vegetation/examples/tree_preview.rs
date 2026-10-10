@@ -1,11 +1,11 @@
 //! Developer tool: renders generated trees (front, side, top) to a PNG with a CPU rasteriser.
 //!
 //! `tree_preview <archetype> <height> <width> <out.png> [--seeds N] [--seed0 S]
-//!  [--min-radius R] [--size PX] [--no-leaves] [--ao]`
+//!  [--lod 0|1|2] [--size PX] [--no-leaves] [--ao]`
 
 use glam::{Vec2, Vec3};
 use omsi_vegetation::classify::Archetype;
-use omsi_vegetation::generator::{leaves, skeleton, tubes, Target, TubeOptions};
+use omsi_vegetation::generator::{generate, skeleton, Lod, Target};
 use omsi_vegetation::presets::preset;
 
 const BG: [u8; 3] = [205, 214, 224];
@@ -38,7 +38,7 @@ fn usage(msg: &str) -> ! {
     eprintln!("error: {msg}");
     eprintln!(
         "usage: tree_preview <archetype> <height> <width> <out.png> [--seeds N] [--seed0 S] \
-         [--min-radius R] [--size PX] [--no-leaves] [--ao]"
+         [--lod 0|1|2] [--size PX] [--no-leaves] [--ao]"
     );
     std::process::exit(2);
 }
@@ -64,7 +64,7 @@ fn main() {
     let height: f32 = num(&args[1], "height");
     let width: f32 = num(&args[2], "width");
     let out = &args[3];
-    let (mut seeds, mut seed0, mut min_radius, mut size) = (3u32, 1u64, 0.0f32, 512usize);
+    let (mut seeds, mut seed0, mut lod, mut size) = (3u32, 1u64, 0u8, 512usize);
     let no_leaves = args[4..].iter().any(|a| a == "--no-leaves");
     let ao = args[4..].iter().any(|a| a == "--ao");
     let rest: Vec<&String> = args[4..]
@@ -79,11 +79,17 @@ fn main() {
         match k.as_str() {
             "--seeds" => seeds = num(v, "--seeds"),
             "--seed0" => seed0 = num(v, "--seed0"),
-            "--min-radius" => min_radius = num(v, "--min-radius"),
+            "--lod" => lod = num(v, "--lod"),
             "--size" => size = num(v, "--size"),
             _ => usage(&format!("unknown option: {k}")),
         }
     }
+    let lod = match lod {
+        0 => Lod::L0,
+        1 => Lod::L1,
+        2 => Lod::L2,
+        _ => usage("--lod must be 0, 1 or 2"),
+    };
     if !(height > 0.0 && width > 0.0 && seeds > 0 && size > 0) {
         usage("height, width, --seeds and --size must be positive");
     }
@@ -94,20 +100,17 @@ fn main() {
         w: 3 * size,
         img: vec![BG; 3 * size * seeds as usize * size],
     };
-    let opts = TubeOptions {
-        min_radius,
-        ..Default::default()
-    };
     let light = Vec3::new(-0.4, -0.6, 0.7).normalize();
 
     for j in 0..seeds {
         let seed = seed0 + j as u64;
         let sk = skeleton(&p, Target { height, width }, seed);
-        let mesh = tubes(&sk, &opts, seed);
+        let tree = generate(&p, Target { height, width }, seed, lod);
+        let mesh = tree.bark;
         let leaf = if no_leaves {
             Default::default()
         } else {
-            leaves(&sk, &p.leaves, seed)
+            tree.leaves
         };
         let mut cnt = [0usize; 4];
         for s in &sk.stems {

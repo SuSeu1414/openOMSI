@@ -143,7 +143,7 @@ fn tropism(q: Quat, k: f32) -> Quat {
     Quat::from_axis_angle(axis.normalize(), ang) * q
 }
 
-fn stem_length(s: &Stem) -> f32 {
+pub(crate) fn stem_length(s: &Stem) -> f32 {
     s.points.windows(2).map(|w| w[0].distance(w[1])).sum()
 }
 

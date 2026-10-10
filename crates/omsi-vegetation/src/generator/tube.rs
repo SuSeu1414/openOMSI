@@ -21,6 +21,10 @@ pub struct TubeOptions {
     pub max_level: u8,
     /// Metres of bark one texture repeat covers around the stem.
     pub bark_tile: f32,
+    /// false: no root flare rings/radius on the trunk.
+    pub flare: bool,
+    /// false: no collar rings/radius on branches.
+    pub collars: bool,
 }
 
 impl Default for TubeOptions {
@@ -32,6 +36,8 @@ impl Default for TubeOptions {
             min_radius: 0.0,
             max_level: 3,
             bark_tile: 0.5,
+            flare: true,
+            collars: true,
         }
     }
 }
@@ -57,11 +63,15 @@ struct Plan {
 
 fn plan(sk: &Skeleton, s: &Stem, o: &TubeOptions) -> Plan {
     let r0 = s.radii[0];
-    let flare = if s.parent.is_none() { sk.flare } else { None };
+    let flare = if s.parent.is_none() && o.flare {
+        sk.flare
+    } else {
+        None
+    };
     let collar = s
         .parent
         .map(|p| sample(&sk.stems[p as usize], s.parent_t).2)
-        .filter(|&rp| r0 >= 0.025 && rp > r0);
+        .filter(|&rp| o.collars && r0 >= 0.025 && rp > r0);
     let mut extra = Vec::new();
     if let Some(f) = flare {
         extra.push(-0.5 * r0);
@@ -225,6 +235,28 @@ mod tests {
                 let i = j / (n + 1);
                 assert!((v.distance(tr.points[i]) - tr.radii[i]).abs() < 1e-4);
             }
+        }
+    }
+
+    #[test]
+    fn options_without_flare_and_collars() {
+        let (p, t) = (preset(Archetype::BroadleafWide).unwrap(), BW);
+        let sk = skeleton(&p, t, 42);
+        let o = TubeOptions {
+            flare: false,
+            collars: false,
+            ..Default::default()
+        };
+        let plain = tubes(&sk, &o, 42);
+        assert!(plain.triangles() < tubes(&sk, &TubeOptions::default(), 42).triangles());
+        let tr = &sk.stems[0];
+        let (n, _) = ring_counts(tr.radii[0], &o);
+        for (j, v) in plain.positions[..tr.points.len() * (n + 1)]
+            .iter()
+            .enumerate()
+        {
+            let i = j / (n + 1);
+            assert!((v.distance(tr.points[i]) - tr.radii[i]).abs() < 1e-4);
         }
     }
 

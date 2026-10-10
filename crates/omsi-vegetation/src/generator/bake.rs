@@ -3,9 +3,8 @@
 
 use glam::{Vec3, Vec4};
 
-use super::leaves::length;
 use super::mesh::VertexAttrs;
-use super::skeleton::Skeleton;
+use super::skeleton::{stem_length, Skeleton};
 use crate::seed::unit;
 
 /// The crown as an ellipsoid fitted to the box of the branches.
@@ -78,7 +77,10 @@ pub(crate) fn stem_bake(sk: &Skeleton, seed: u64) -> Vec<StemBake> {
     let trunk_r = sk.stems.first().map_or(1.0, |s| s.radii[0]);
     let mut out: Vec<StemBake> = Vec::with_capacity(sk.stems.len());
     for (i, s) in sk.stems.iter().enumerate() {
-        let pivot = s.points.first().map_or(Vec4::ZERO, |p| p.extend(length(s)));
+        let pivot = s
+            .points
+            .first()
+            .map_or(Vec4::ZERO, |p| p.extend(stem_length(s)));
         let up = s.parent.map(|p| &out[p as usize]);
         let (branch, twig, phase) = match (s.level, up) {
             (0, _) | (_, None) => (Vec4::ZERO, Vec4::ZERO, 0.0),
@@ -90,7 +92,7 @@ pub(crate) fn stem_bake(sk: &Skeleton, seed: u64) -> Vec<StemBake> {
             branch,
             twig,
             phase,
-            stiffness: (s.radii[0] / trunk_r).sqrt().clamp(0.0, 1.0),
+            stiffness: (s.radii[0] / trunk_r.max(1e-6)).sqrt().clamp(0.0, 1.0),
             rand: unit(seed ^ 0x7A4D_0001, i as u64),
         });
     }
@@ -174,7 +176,7 @@ mod tests {
         assert_eq!(sb[0].stiffness, 1.0);
         let (mut l1, mut l2) = (0, 0);
         for (i, s) in sk.stems.iter().enumerate() {
-            let own = s.points[0].extend(length(s));
+            let own = s.points[0].extend(stem_length(s));
             match s.level {
                 1 => {
                     l1 += 1;

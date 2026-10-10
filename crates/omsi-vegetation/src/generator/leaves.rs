@@ -3,10 +3,10 @@
 
 use glam::{Quat, Vec2, Vec3};
 
-use super::bake::{attrs, stem_bake, Crown};
+use super::bake::{attrs, stem_bake, Crown, StemBake};
 use super::mesh::Mesh;
 use super::params::LeafParams;
-use super::skeleton::{sample, Skeleton, Stem};
+use super::skeleton::{sample, stem_length, Skeleton};
 use crate::seed::{splitmix64, unit, Rng};
 
 /// The card outline in card space (u across, v from base 0 to tip 1), counter-clockwise, convex.
@@ -22,8 +22,50 @@ pub const HULL: [Vec2; 8] = [
 ];
 pub const CARD_TRIANGLES: usize = 6;
 
-pub(super) fn length(s: &Stem) -> f32 {
-    s.points.windows(2).map(|w| w[0].distance(w[1])).sum()
+/// Facing rule of a card with unit axis `d` at `pos`: out of the crown lerped to +Z by `up`,
+/// made perpendicular to `d`; `side` (unit, perpendicular to d) is the fallback.
+pub(crate) fn card_normal(pos: Vec3, d: Vec3, side: Vec3, up: f32) -> Vec3 {
+    let flat = Vec3::new(pos.x, pos.y, 0.0);
+    let out = if flat.length() < 1e-3 {
+        side
+    } else {
+        flat.normalize()
+    };
+    let f = out.lerp(Vec3::Z, up).normalize();
+    let n = f - d * f.dot(d);
+    if n.length() < 1e-3 {
+        side
+    } else {
+        n.normalize()
+    }
+}
+
+/// Push one hull card: base midpoint `pos`, unit axis `d`, unit normal `n` (perpendicular to d),
+/// `width` across, `len` along; fan of `CARD_TRIANGLES`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn push_card(
+    mesh: &mut Mesh,
+    pos: Vec3,
+    d: Vec3,
+    n: Vec3,
+    width: f32,
+    len: f32,
+    crown: &Crown,
+    sb: &StemBake,
+    rand: f32,
+) {
+    let w = d.cross(n);
+    let base = mesh.positions.len() as u32;
+    for uv in HULL {
+        let p = pos + w * (uv.x - 0.5) * width + d * uv.y * len;
+        mesh.positions.push(p);
+        mesh.attrs.push(attrs(crown, sb, p, uv.y, true, rand));
+        mesh.normals.push(n);
+        mesh.uvs.push(uv);
+    }
+    for i in 1..=CARD_TRIANGLES as u32 {
+        mesh.indices.extend([base, base + i, base + i + 1]);
+    }
 }
 
 /// Leaf cards of a skeleton: 8 vertices and 6 triangles per card, in card order.
@@ -43,7 +85,7 @@ pub fn leaves(sk: &Skeleton, lp: &LeafParams, seed: u64) -> Mesh {
         // (t, angle in degrees, roll in degrees)
         let mut cards = Vec::new();
         if s.level == outer {
-            let n = ((1.0 - lp.start) * length(s) / (lp.spacing * lp.size)) as usize;
+            let n = ((1.0 - lp.start) * stem_length(s) / (lp.spacing * lp.size)) as usize;
             let roll0 = r.unit() * 360.0;
             for j in 0..n {
                 let t = lp.start + (1.0 - lp.start) * (j as f32 + 0.5) / n as f32;
@@ -60,35 +102,13 @@ pub fn leaves(sk: &Skeleton, lp: &LeafParams, seed: u64) -> Mesh {
             let a = q * Vec3::new(cr, sr, 0.0);
             let (sa, ca) = ang.to_radians().sin_cos();
             let d = (h * ca + a * sa).normalize();
-            let flat = Vec3::new(pos.x, pos.y, 0.0);
-            let out = if flat.length() < 1e-3 {
-                a
-            } else {
-                flat.normalize()
-            };
-            let f = out.lerp(Vec3::Z, lp.up).normalize();
-            let n = f - d * f.dot(d);
-            let n = if n.length() < 1e-3 {
-                a.cross(d).normalize()
-            } else {
-                n.normalize()
-            };
+            let n = card_normal(pos, d, a.cross(d).normalize_or_zero(), lp.up);
             let n = Quat::from_axis_angle(d, (r.signed() * 25.0).to_radians()) * n;
-            let w = d.cross(n);
-            let base = mesh.positions.len() as u32;
             let card_rand = unit(seed ^ 0xCA4D_0002, card);
             card += 1;
-            for uv in HULL {
-                let p = pos + w * (uv.x - 0.5) * size + d * uv.y * size;
-                mesh.positions.push(p);
-                mesh.attrs
-                    .push(attrs(&crown, &sb[idx], p, uv.y, true, card_rand));
-                mesh.normals.push(n);
-                mesh.uvs.push(uv);
-            }
-            for i in 1..=CARD_TRIANGLES as u32 {
-                mesh.indices.extend([base, base + i, base + i + 1]);
-            }
+            push_card(
+                &mut mesh, pos, d, n, size, size, &crown, &sb[idx], card_rand,
+            );
         }
     }
     mesh
