@@ -38,7 +38,12 @@ pub fn fbm(p: Vec2, period: [u32; 2], octaves: u32, seed: u64) -> f32 {
     for k in 0..octaves.clamp(1, 10) {
         let s = (1u32 << k) as f32;
         let per = [period[0] << k, period[1] << k];
-        sum += amp * value(p * s, per, seed.wrapping_add(k as u64));
+        sum += amp
+            * value(
+                p * s,
+                per,
+                splitmix64(seed ^ (k as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15)),
+            );
         norm += amp;
         amp *= 0.5;
     }

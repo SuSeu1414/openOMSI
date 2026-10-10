@@ -1,7 +1,8 @@
 //! Building blocks of the procedural vegetation textures: periodic noise (`noise`) and field
 //! operations (`ops`). Pure data, deterministic from a seed; every noise is periodic so a
-//! texture built from it tiles without a seam.
+//! texture built from it tiles without a seam. `bark` builds the per-archetype bark maps.
 
+pub mod bark;
 pub mod noise;
 pub mod ops;
 
