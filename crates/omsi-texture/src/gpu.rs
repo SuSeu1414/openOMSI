@@ -245,6 +245,47 @@ pub fn prepare_bump_with(img: &Image, o: GpuOptions) -> TextureData {
     TextureData { width: w, height: hh, format: PixelFormat::Rgba8, levels, has_alpha: true, gpu_mips: false }
 }
 
+/// A vegetation texture (leaf atlas, bark) for the GPU: a full mip chain made here, each
+/// level's alpha scaled so the share of texels passing the alpha test stays that of level
+/// 0 (crowns do not thin out with distance). BC3 (BC1 when opaque) where the device takes
+/// block formats, compression is on and the sides are multiples of four, RGBA levels otherwise. Not for map
+/// textures: they keep the plain chain so that vanilla looks as it always did.
+pub fn prepare_vegetation(img: Image) -> TextureData {
+    prepare_vegetation_with(img, gpu_options())
+}
+
+/// [`prepare_vegetation`] under the given options.
+pub fn prepare_vegetation_with(img: Image, o: GpuOptions) -> TextureData {
+    let (w, h) = (img.width.max(1), img.height.max(1));
+    let opaque = !img.has_alpha || img.rgba.chunks_exact(4).all(|p| p[3] == 255);
+    let c0 = bc::alpha_coverage(&img.rgba);
+    let block = o.bc && o.compress && w % 4 == 0 && h % 4 == 0;
+    let format = if !block {
+        PixelFormat::Rgba8
+    } else if opaque {
+        PixelFormat::Bc1
+    } else {
+        PixelFormat::Bc3
+    };
+    let emit = |level: Vec<u8>, lw: u32, lh: u32| if block { bc::encode(&level, lw, lh, format.bc(false)).0 } else { level };
+    let mut levels = Vec::with_capacity(mip_count(w, h) as usize);
+    levels.push(emit(img.rgba.clone(), w, h));
+    // The chain is made from the unscaled levels, so the scales do not compound.
+    let (mut cur, mut cw, mut ch) = (img.rgba, w, h);
+    for _ in 1..mip_count(w, h) {
+        let (next, nw, nh) = bc::downsample(&cur, cw, ch);
+        let mut out = next.clone();
+        if !opaque {
+            bc::scale_alpha_to_coverage(&mut out, c0);
+        }
+        levels.push(emit(out, nw, nh));
+        cur = next;
+        cw = nw;
+        ch = nh;
+    }
+    TextureData { width: w, height: h, format, levels, has_alpha: img.has_alpha, gpu_mips: false }
+}
+
 /// A picture drawn without a mip chain (a tile's light map and ground masks) for the GPU:
 /// one level, compressed where [`prepare_image`] would compress it. `alpha_only`: only the
 /// alpha channel is ever read, so a mask of nothing but 0 and 255 goes up as 1-bit BC1
@@ -384,6 +425,78 @@ pub fn load_gpu_bytes(bytes: &[u8], path: &Path, o: GpuOptions) -> Result<(Textu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn leaf(side: u32, opaque: bool) -> Image {
+        let mut rgba = Vec::new();
+        for y in 0..side {
+            for x in 0..side {
+                let a = if opaque || (x + y) % 13 < 2 { 255 } else { 0 };
+                rgba.extend_from_slice(&[40, 90, 30, a]);
+            }
+        }
+        Image { rgba, width: side, height: side, has_alpha: !opaque }
+    }
+
+    #[test]
+    fn vegetation_chain_keeps_coverage_rgba() {
+        let img = leaf(256, false);
+        let c0 = bc::alpha_coverage(&img.rgba);
+        let t = prepare_vegetation_with(img.clone(), GpuOptions { bc: false, compress: false });
+        assert_eq!(t.format, PixelFormat::Rgba8);
+        assert_eq!(t.levels.len(), mip_count(256, 256) as usize);
+        assert!(!t.gpu_mips);
+        let (mut plain, mut side) = (img.rgba, 256u32);
+        for (i, l) in t.levels.iter().enumerate() {
+            if i > 0 {
+                plain = bc::downsample(&plain, side, side).0;
+                side /= 2;
+            }
+            let kept = bc::alpha_coverage(l);
+            eprintln!("side {side:4}: plain {:.4} kept {kept:.4} (c0 {c0:.4})", bc::alpha_coverage(&plain));
+            if side >= 16 {
+                assert!((kept - c0).abs() <= 0.02, "level {i}: {kept} vs {c0}");
+            }
+        }
+    }
+
+    #[test]
+    fn vegetation_chain_bc3() {
+        let img = leaf(256, false);
+        let c0 = bc::alpha_coverage(&img.rgba);
+        let t = prepare_vegetation_with(img, GpuOptions { bc: true, compress: true });
+        assert_eq!(t.format, PixelFormat::Bc3);
+        assert_eq!(t.levels.len(), 9);
+        for (i, l) in t.levels.iter().enumerate() {
+            let s = 256u32 >> i;
+            assert_eq!(l.len(), PixelFormat::Bc3.level_bytes(s, s));
+        }
+        // BC3 alpha error near the alpha-test threshold costs some coverage: allow 0.04.
+        let kept = bc::alpha_coverage(&bc::decode(&t.levels[3], 32, 32, Bc::Bc3));
+        let mut plain = leaf(256, false).rgba;
+        let mut side = 256;
+        for _ in 0..3 {
+            plain = bc::downsample(&plain, side, side).0;
+            side /= 2;
+        }
+        let plain = bc::alpha_coverage(&bc::decode(&bc::encode(&plain, 32, 32, Bc::Bc3).0, 32, 32, Bc::Bc3));
+        eprintln!("bc3 32x32: plain {plain:.4} kept {kept:.4} (c0 {c0:.4})");
+        assert!((kept - c0).abs() <= 0.04, "{kept} vs {c0}");
+        assert!(kept > plain);
+    }
+
+    #[test]
+    fn vegetation_opaque_is_bc1() {
+        let t = prepare_vegetation_with(leaf(64, true), GpuOptions { bc: true, compress: true });
+        assert_eq!(t.format, PixelFormat::Bc1);
+        assert_eq!(t.levels.len(), 7);
+    }
+
+    #[test]
+    fn vegetation_level_zero_untouched() {
+        let img = leaf(256, false);
+        let t = prepare_vegetation_with(img.clone(), GpuOptions { bc: false, compress: false });
+        assert_eq!(t.levels[0], img.rgba);
+    }
 
     fn dds(fourcc: &[u8; 4], w: u32, h: u32, mips: u32, blocks: &[u8]) -> Vec<u8> {
         let mut b = vec![0u8; 128];
