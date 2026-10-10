@@ -3401,6 +3401,7 @@ dependencies = [
  "omsi-sim",
  "omsi-texture",
  "omsi-timetable",
+ "omsi-vegetation",
  "omsi-vehicle",
  "parking_lot",
  "rayon",
@@ -3612,6 +3613,10 @@ dependencies = [
  "resvg",
  "wgpu",
 ]
+
+[[package]]
+name = "omsi-vegetation"
+version = "0.1.0"
 
 [[package]]
 name = "omsi-vehicle"

@@ -1,6 +1,7 @@
 //! `--only trees`: a read-only inventory of the tree and plant objects placed on maps.
 
 use omsi_scenery::sco::SceneryObject;
+use omsi_vegetation::classify::{classify, Archetype, Class, Signals, MIN_CONFIDENCE};
 use rayon::prelude::*;
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Write as _;
@@ -25,10 +26,6 @@ impl Kind {
     }
 }
 
-// the word lists of the game's `vegetation_give_of` (omsi-app, scene/terrain_paint.rs)
-const GROUP_WORDS: [&str; 17] = ["tree", "baum", "bäume", "baeume", "deciduous", "conifer", "shrub", "bush", "busch", "strauch", "hecke", "hedge", "plant", "pflanz", "arbor", "vegetation", "forest"];
-const NAME_WORDS: [&str; 15] = ["tree", "trees", "baum", "shrub", "shrubbery", "bush", "busch", "strauch", "hecke", "hedge", "arbor", "chestnut", "kastanie", "palm", "plant"];
-
 fn kind_of(sco: &SceneryObject) -> Kind {
     if sco.tree.is_some() {
         return Kind::Tree;
@@ -38,11 +35,7 @@ fn kind_of(sco: &SceneryObject) -> Kind {
         return Kind::Backdrop;
     }
     let stem = sco.path.file_stem().map(|s| s.to_string_lossy().to_lowercase()).unwrap_or_default();
-    let plant = if groups.is_empty() {
-        stem.split(|c: char| !c.is_alphabetic()).any(|w| NAME_WORDS.contains(&w))
-    } else {
-        groups.iter().any(|g| g.split(|c: char| !c.is_alphabetic()).any(|word| GROUP_WORDS.iter().any(|w| word.starts_with(w))))
-    };
+    let plant = omsi_vegetation::classify::is_plant(&groups, &stem);
     if plant {
         Kind::PlantModel
     } else {
@@ -69,10 +62,18 @@ struct Agg {
     height: (f64, f64, f64),
     ratio: (f64, f64, f64),
     groups: String,
+    group_list: Vec<String>,
     sco_tree: Option<(String, f32, f32, f32, f32)>,
 }
 
 impl Agg {
+    fn class(&self) -> Class {
+        let tex = self.textures_sorted().first().map(|(t, _)| t.as_str());
+        let tree = self.kind == Kind::Tree;
+        let height = tree.then(|| (self.height.2 / self.instances as f64) as f32);
+        classify(&Signals { tree_section: tree, sco_path: &self.display, groups: &self.group_list, texture: tex.filter(|_| tree), height })
+    }
+
     fn textures_sorted(&self) -> Vec<(&String, &usize)> {
         let mut v: Vec<_> = self.label_textures.iter().collect();
         v.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
@@ -99,7 +100,7 @@ pub fn inventory(root: &Path, out: Option<&Path>, verbose: bool) {
         }
     }
     let mut scos: HashMap<String, Option<SceneryObject>> = HashMap::new();
-    let mut csv_out = String::from("map,kind,sco,instances,textures,height_min,height_max,height_mean,ratio_mean,sco_tree,groups\n");
+    let mut csv_out = String::from("map,kind,sco,instances,textures,height_min,height_max,height_mean,ratio_mean,sco_tree,groups,archetype,species,confidence\n");
     globals.sort();
     for g in &globals {
         let Ok(gc) = omsi_map::GlobalCfg::load(g) else { continue };
@@ -144,6 +145,7 @@ pub fn inventory(root: &Path, out: Option<&Path>, verbose: bool) {
                 height: (f64::MAX, f64::MIN, 0.0),
                 ratio: (f64::MAX, f64::MIN, 0.0),
                 groups: sco.groups.join("|"),
+                group_list: sco.groups.clone(),
                 sco_tree: sco.tree.clone(),
             });
             a.instances += 1;
@@ -170,6 +172,21 @@ pub fn inventory(root: &Path, out: Option<&Path>, verbose: bool) {
             unresolved,
             failed_note
         );
+        let mut by_class: BTreeMap<&str, usize> = BTreeMap::new();
+        let (mut low_instances, mut low_types) = (0, 0);
+        let classes_of: BTreeMap<&String, Class> = aggs.iter().map(|(k, a)| (k, a.class())).collect();
+        for (k, a) in aggs.iter().filter(|(_, a)| matches!(a.kind, Kind::Tree | Kind::PlantModel)) {
+            let c = classes_of[k];
+            *by_class.entry(c.archetype.name()).or_default() += a.instances;
+            if c.archetype != Archetype::None && !c.replace_geometry() {
+                low_instances += a.instances;
+                low_types += 1;
+            }
+        }
+        let mut by_class: Vec<_> = by_class.into_iter().collect();
+        by_class.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
+        let classes = by_class.iter().map(|(n, c)| format!("{n} {c}")).collect::<Vec<_>>().join(", ");
+        println!("  classes: {classes} (instances); low confidence (<{MIN_CONFIDENCE:.2}): {low_instances} instances in {low_types} types");
         let mut list: Vec<(&String, &Agg)> = aggs.iter().filter(|(_, a)| a.kind != Kind::Backdrop).collect();
         list.sort_by(|a, b| b.1.instances.cmp(&a.1.instances).then(a.0.cmp(b.0)));
         for (_, a) in list.iter().take(if verbose { usize::MAX } else { 10 }) {
@@ -178,13 +195,14 @@ pub fn inventory(root: &Path, out: Option<&Path>, verbose: bool) {
             let h = if a.kind == Kind::Tree { format!("{:.1}-{:.1}", a.height.0, a.height.1) } else { "-".into() };
             println!("  {}  {}  {}  h {}  tex {}", a.instances, a.kind.name(), path, h, tex);
         }
-        for (_, a) in &aggs {
+        for (k, a) in &aggs {
             let path = &a.display;
+            let c = classes_of[k];
             let n = a.instances as f64;
             let textures = a.textures_sorted().iter().map(|(t, c)| format!("{t}:{c}")).collect::<Vec<_>>().join(";");
             let (hmin, hmax, hmean, rmean) = if a.kind == Kind::Tree { (format!("{:.2}", a.height.0), format!("{:.2}", a.height.1), format!("{:.2}", a.height.2 / n), format!("{:.2}", a.ratio.2 / n)) } else { Default::default() };
             let sco_tree = a.sco_tree.as_ref().map(|(t, ha, hb, ra, rb)| format!("{t} h {:.2}-{:.2} r {:.2}-{:.2}", ha.min(*hb), ha.max(*hb), ra.min(*rb), ra.max(*rb))).unwrap_or_default();
-            let _ = writeln!(csv_out, "{},{},{},{},{},{hmin},{hmax},{hmean},{rmean},{},{}", csv(&gc.name), a.kind.name(), csv(path), a.instances, csv(&textures), csv(&sco_tree), csv(&a.groups));
+            let _ = writeln!(csv_out, "{},{},{},{},{},{hmin},{hmax},{hmean},{rmean},{},{},{},{},{:.2}", csv(&gc.name), a.kind.name(), csv(path), a.instances, csv(&textures), csv(&sco_tree), csv(&a.groups), c.archetype.name(), c.species.unwrap_or(""), c.confidence);
         }
     }
     if let Some(out) = out {

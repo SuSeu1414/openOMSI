@@ -147,7 +147,8 @@ budget.
 Where the code is going (new code follows it, refactors move old code towards it):
 
 1. **Parsers** (`omsi-cfg`, `omsi-script`, `omsi-o3d`, `omsi-model`, `omsi-scenery`, `omsi-map`,
-   `omsi-vehicle`, `omsi-timetable`, `omsi-content`): files in, plain data out. No GPU, no
+   `omsi-vehicle`, `omsi-timetable`, `omsi-content`,
+   `omsi-vegetation`): files in, plain data out. No GPU, no
    clock, no global state; each one testable on byte buffers.
 2. **Simulation** (`omsi-sim`: vehicles, `ai_traffic` (`TrafficSim`), `people` (`PeopleSim`),
    `timetable_run` (`ScheduleSim`), physics, scripts): advances

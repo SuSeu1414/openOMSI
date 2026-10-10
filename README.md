@@ -167,6 +167,7 @@ openOMSI/
 │   ├── omsi-script/     the OMSI script language (compiler + VM)
 │   ├── omsi-o3d/ omsi-model/ omsi-texture/ omsi-geometry/   meshes, models, textures, splines
 │   ├── omsi-map/ omsi-scenery/ omsi-timetable/ omsi-vehicle/ omsi-content/   content formats
+│   ├── omsi-vegetation/ tree classification and per-instance seeds (pure data)
 │   ├── omsi-sim/        vehicles, AI traffic, people, physics
 │   ├── omsi-render/     the wgpu renderer
 │   ├── omsi-audio/ omsi-net/ omsi-plugin/ omsi-ui/   sound, multiplayer, plugins, UI toolkit
