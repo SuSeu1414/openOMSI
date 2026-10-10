@@ -251,10 +251,13 @@ Key takeaways:
 * **NEW `crates/omsi-vegetation`** (layer 1: pure data, no GPU, no clock). Modules:
   `classify` (signals -> `Archetype` + `confidence: f32`), `overrides` (parser of
   `Vegetation/*.cfg`), `seed`, `generator` (skeleton, meshes, LODs), `cache` (keys and
-  (de)serialisation of meshes), `presets`, `tex` (procedural bark and leaf textures as RGBA
-  buffers). Depends on `omsi-cfg`, `omsi-scenery`, `glam`, `rayon`; nothing else new.
-* **`omsi-texture`:** coverage-preserving mip generation, a new function next to
-  `bc::downsample` (`bc.rs:657`). BC encoding of the generated textures uses the existing
+  (de)serialisation of meshes), `presets`, `tex` (procedural textures as RGBA buffers: periodic
+  noise and field ops, `bark`, `leaves` (broadleaf, with `needles` and the shared
+  `leaf_raster`), `palette` (seasons)). Depends on `omsi-cfg`, `omsi-scenery`, `glam`, `rayon`; nothing else new.
+* **`omsi-texture`:** coverage-preserving chain `gpu::prepare_vegetation` (leaf albedo +
+  alpha) and `gpu::prepare_vegetation_data` (data maps: alpha kept, always BC3; plain box
+  filter `bc::downsample_unorm` for pure data). `omsi-vegetation` uses `omsi-texture` only
+  as a dev-dependency (tests, previews). BC encoding of the generated textures uses the existing
   `bc::encode` (`bc.rs:544`).
 * **`omsi-render`:** new module `vegetation/` (pipelines, instance buffers, culling, LOD
   fade, impostor bake and draw, wind). It takes plain data (meshes, textures, an instance
@@ -359,17 +362,35 @@ radial segments.
 
 ### 4.6 Materials and textures (Phase 3)
 
-* Per archetype: bark (albedo, normal, roughness, AO, height) and a leaf atlas (albedo,
-  normal, roughness, thickness).
-* Colour: the underside of a leaf is lighter and less saturated.
-* Seasons: spring, summer and autumn palettes per species with per-cluster variation.
-  Winter: deciduous trees show the full skeleton (leaf cards are not drawn); conifers stay
-  green; snow by the up-facing normal through the existing enhanced snow
-  (`enhanced.wgsl:885`).
-* **Coverage-preserving mips:** for each mip level the alpha is scaled so that the
-  coverage at `ALPHA_REF` equals that of mip 0 (Castano 2010). Only for vegetation
-  textures (PR 7), so vanilla stays identical.
-* BC1 / BC3 through `bc::encode`; the memory is counted in `texture_memory`.
+* **Bark** per archetype, 512² High / 256² Low, one repeat = 0.5 m (`bark_tile`), tileable
+  (every noise periodic). Two maps: `albedo_height` (rgb sRGB albedo, a = height) and
+  `normal_rough_ao` (r roughness, g normal.y, b AO, a normal.x). Recipes: furrowed (warped,
+  stretched Worley ridges: linden, poplar, willow), plated (pine), scaly (spruce), lenticels
+  (birch), fine grain (shrub, hedge). Normal strength from relief in metres.
+* **Leaf atlas** per archetype, 1024² High / 512² Low, 2×2 tiles: 0–2 twig clusters for LOD0
+  cards (picked by the card's rand), 3 a dense cluster for LOD1/LOD2 cards. Everything is
+  drawn inside the fixed card hull (`HULL`) with a 1/64 gutter, so the generated cards need
+  no change; `tex::leaves::atlas_uv(card_uv, tile)` is the mapping the renderer uses. Maps:
+  `albedo_alpha` (rgb leaf top, a coverage) and `normal_rough_trans` (r roughness, g
+  normal.y, b translucency (0 = twig wood), a normal.x). Colour under alpha 0 is dilated.
+* **Tangent frame** of all maps: +x = texture column (u), +y = texture row; z rebuilt in the
+  shader (x in alpha, y in green: DXT5nm-style, BC3). The frame is left-handed with N out of
+  the surface: the shader takes B along +row, not `cross(N, T)`.
+* **Seasons:** one summer atlas; the shader recolours: `out = colour(key) * lum(albedo) /
+  lum(leaf_ref)` where translucency > 0; `key = clamp(0.6 phase + 0.25 rand + 0.3 (h - 0.5) +
+  0.075)` (whole branches turn together, the crown top first); per season and archetype a
+  4-stop gradient, a card density (cards with rand >= density are not drawn: thinning, bare
+  winter) and the underside lift / desaturation. Winter: deciduous bare, conifers green
+  (darker), the hedge keeps half its leaves, dry. Snow by the up-facing normal through the existing
+  enhanced snow (`enhanced.wgsl:885`). CPU reference: `tex::palette::recolour`.
+* **Mips and BC:** leaf `albedo_alpha` through `prepare_vegetation` (coverage kept within
+  15 % of mip 0 down to 16 px after BC3, test `atlas_mips`); the other maps through
+  `prepare_vegetation_data`. All maps are linear data except the albedo rgb: the renderer
+  must upload the data maps as `*Unorm`, not `*UnormSrgb` (PR 9).
+* **Memory** (BC3 with mips, per archetype, 4 maps): 3.3 MiB High, 0.8 MiB Low; all eight
+  archetypes 27 MiB / 7 MiB, inside the §5 texture budget; counted in `texture_memory`.
+* **Cost:** bark 0.15–0.2 s, leaf atlas 0.7–2.9 s per archetype at High on one core (release):
+  generated on the background pool and cached with the variants (PR 9).
 * **Source of the textures: decision (a), section 8.**
 
 ### 4.7 Rendering (Phase 4)
