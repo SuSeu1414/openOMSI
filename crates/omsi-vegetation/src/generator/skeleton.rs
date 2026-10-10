@@ -34,6 +34,21 @@ pub struct Stem {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Skeleton {
     pub stems: Vec<Stem>,
+    /// Root flare of the trunk; `None` when the preset has no flare.
+    pub flare: Option<Flare>,
+}
+
+/// Root flare with buttresses, applied to the trunk while meshing.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Flare {
+    /// The preset's `flare`.
+    pub amount: f32,
+    /// 3..=5.
+    pub buttresses: u32,
+    /// Radians, [0, TAU).
+    pub phase: f32,
+    /// Metres of trunk (arc length) the flare covers: H / 8.
+    pub zone: f32,
 }
 
 pub const MIN_RADIUS: f32 = 0.002;
@@ -127,7 +142,7 @@ fn stem_length(s: &Stem) -> f32 {
 }
 
 /// Position, frame and radius at fraction `t` of a stem (equal segments).
-fn sample(s: &Stem, t: f32) -> (Vec3, Quat, f32) {
+pub(super) fn sample(s: &Stem, t: f32) -> (Vec3, Quat, f32) {
     let segs = s.points.len() - 1;
     let x = t.clamp(0.0, 1.0) * segs as f32;
     let i = (x.floor() as usize).min(segs - 1);
@@ -304,7 +319,14 @@ pub fn skeleton(p: &TreeParams, target: Target, seed: u64) -> Skeleton {
             }
         }
     }
-    Skeleton { stems }
+    let mut fr = Rng::new(splitmix64(seed ^ 0xF1A2_E000));
+    let flare = (p.flare > 0.0).then(|| Flare {
+        amount: p.flare,
+        buttresses: 3 + (fr.next_u64() % 3) as u32,
+        phase: fr.unit() * TAU,
+        zone: h / 8.0,
+    });
+    Skeleton { stems, flare }
 }
 
 #[cfg(test)]
@@ -486,5 +508,24 @@ mod tests {
         assert_eq!(envelope(1.1, 0.5, 0.5, 0.5), 0.0);
         assert_eq!(shape_ratio(Shape::Conical, 1.0), 1.0);
         assert_eq!(shape_ratio(Shape::Flame, 0.7), 1.0);
+    }
+
+    #[test]
+    fn skeleton_stream_unchanged() {
+        let [b, c] = both();
+        let tc = Target {
+            height: 20.0,
+            width: 6.0,
+        };
+        for (p, t, want) in [(&b, T, [4, 38, 302, 0]), (&c, tc, [1, 62, 363, 0])] {
+            let sk = skeleton(p, t, 42);
+            let mut bare = sk.clone();
+            bare.flare = None;
+            assert_eq!(digest(&sk), digest(&bare));
+            let got: Vec<usize> = (0..4)
+                .map(|l| sk.stems.iter().filter(|s| s.level == l).count())
+                .collect();
+            assert_eq!(got, want);
+        }
     }
 }

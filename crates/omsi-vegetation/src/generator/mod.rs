@@ -2,6 +2,7 @@
 
 pub mod mesh;
 pub mod params;
+mod rings;
 pub mod skeleton;
 pub mod tube;
 
