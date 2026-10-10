@@ -105,4 +105,10 @@ pub struct TreeParams {
     pub trunk_lean: f32,
     /// 0..1, crown centre shift as a fraction of the half-width.
     pub asymmetry: f32,
+    /// Number of co-dominant leaders the trunk splits into; 0 or 1 = no fork.
+    pub trunk_forks: u32,
+    /// Fraction of the height where the trunk forks (0..1).
+    pub fork_height: f32,
+    /// Degrees from the trunk axis, max.
+    pub fork_angle: f32,
 }

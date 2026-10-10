@@ -232,7 +232,7 @@ mod tests {
                 tubes(&sk, &small).triangles(),
             );
             eprintln!("budget: default {a}, min_radius 0.01 {b}");
-            assert!(a <= 20_000);
+            assert!(a <= 25_000);
             assert!(b < a);
         }
     }

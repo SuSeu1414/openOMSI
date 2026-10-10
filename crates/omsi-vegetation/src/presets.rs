@@ -48,14 +48,14 @@ pub fn preset(a: Archetype) -> Option<TreeParams> {
             level: [
                 lv(1.0, 0.0, 8, 0.0, 0.0, 20.0, 0.0, 0.0, 0.0, 0.0, 0),
                 lv(
-                    0.45, 0.08, 6, -25.0, 0.0, 40.0, 55.0, -25.0, 137.5, 15.0, 36,
+                    0.50, 0.08, 6, -30.0, 0.0, 40.0, 45.0, -20.0, 137.5, 15.0, 36,
                 ),
                 lv(0.40, 0.10, 4, -10.0, 0.0, 60.0, 45.0, 15.0, 137.5, 25.0, 14),
                 UNUSED,
             ],
             base_size: 0.30,
             ratio: 0.018,
-            ratio_power: 1.3,
+            ratio_power: 1.05,
             flare: 0.6,
             attraction_up: 0.6,
             crown_ratio: 0.70,
@@ -65,6 +65,9 @@ pub fn preset(a: Archetype) -> Option<TreeParams> {
             dead_branches: 0.15,
             trunk_lean: 4.0,
             asymmetry: 0.12,
+            trunk_forks: 3,
+            fork_height: 0.45,
+            fork_angle: 28.0,
         }),
         // Spruce / fir: excurrent.
         Archetype::ConiferConical => Some(TreeParams {
@@ -73,14 +76,14 @@ pub fn preset(a: Archetype) -> Option<TreeParams> {
             level: [
                 lv(1.0, 0.0, 10, 0.0, 0.0, 6.0, 0.0, 0.0, 0.0, 0.0, 0),
                 lv(
-                    0.32, 0.05, 5, 15.0, -25.0, 20.0, 80.0, -15.0, 137.5, 10.0, 60,
+                    0.42, 0.05, 5, 15.0, -25.0, 20.0, 80.0, -15.0, 137.5, 10.0, 80,
                 ),
-                lv(0.30, 0.10, 3, 0.0, 0.0, 30.0, 50.0, 10.0, -1.0, 20.0, 12),
+                lv(0.35, 0.10, 3, 0.0, 0.0, 30.0, 50.0, 10.0, -1.0, 20.0, 16),
                 UNUSED,
             ],
             base_size: 0.12,
             ratio: 0.017,
-            ratio_power: 1.4,
+            ratio_power: 1.0,
             flare: 0.4,
             attraction_up: -0.2,
             crown_ratio: 0.40,
@@ -90,6 +93,9 @@ pub fn preset(a: Archetype) -> Option<TreeParams> {
             dead_branches: 0.25,
             trunk_lean: 1.5,
             asymmetry: 0.05,
+            trunk_forks: 0,
+            fork_height: 0.0,
+            fork_angle: 0.0,
         }),
         _ => None,
     }

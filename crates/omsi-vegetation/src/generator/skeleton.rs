@@ -55,6 +55,7 @@ impl Ctx<'_> {
         parent: Option<u32>,
         t: f32,
         idx: usize,
+        taper_span: f32,
     ) -> Stem {
         let lp = &self.p.level[n];
         let segs = lp.curve_res.max(1) as usize;
@@ -88,7 +89,9 @@ impl Ctx<'_> {
         }
         frames.push(*frames.last().unwrap());
         let radii = (0..=segs)
-            .map(|k| (radius * (1.0 - lp.taper * k as f32 / segs as f32)).max(MIN_RADIUS))
+            .map(|k| {
+                (radius * (1.0 - lp.taper * (k as f32 / segs as f32) * taper_span)).max(MIN_RADIUS)
+            })
             .collect();
         Stem {
             level: n as u8,
@@ -157,7 +160,42 @@ pub fn skeleton(p: &TreeParams, target: Target, seed: u64) -> Skeleton {
     let l0 = h * p.level[0].length;
     let r0 = l0 * p.ratio;
     let frame0 = Quat::from_rotation_z(lean_dir) * Quat::from_rotation_x(lean.to_radians());
-    let mut stems = vec![cx.grow(0, Vec3::ZERO, frame0, l0, r0, None, 0.0, 0)];
+    let forks = if p.trunk_forks >= 2 { p.trunk_forks } else { 0 };
+    let mut stems = Vec::new();
+    if forks == 0 {
+        stems.push(cx.grow(0, Vec3::ZERO, frame0, l0, r0, None, 0.0, 0, 1.0));
+    } else {
+        let fh = p.fork_height;
+        let lt = l0 * fh;
+        stems.push(cx.grow(0, Vec3::ZERO, frame0, lt, r0, None, 0.0, 0, fh));
+        let rf = r0 * (1.0 - p.level[0].taper * fh);
+        let rl = (rf / (forks as f32).sqrt()).max(MIN_RADIUS);
+        let tip = *stems[0].points.last().unwrap();
+        let ftip = *stems[0].frames.last().unwrap();
+        let phi0 = r.unit() * 360.0;
+        for j in 0..forks {
+            let phi = phi0 + j as f32 * 360.0 / forks as f32 + r.signed() * 20.0;
+            let ang_r = p.fork_angle * (0.75 + 0.25 * r.unit());
+            let u = 0.92 + 0.08 * r.unit();
+            let len = (h - tip.z) / ang_r.to_radians().cos() * u;
+            let ang = ang_r.min((0.35 * w / len).clamp(0.0, 1.0).asin().to_degrees());
+            let mut len = (h - tip.z) / ang.to_radians().cos() * u;
+            let frame = ftip
+                * Quat::from_rotation_z(phi.to_radians())
+                * Quat::from_rotation_x(ang.to_radians());
+            let idx = stems.len();
+            let mut s = cx.grow(0, tip, frame, len, rl, Some(0), 1.0, idx, 1.0);
+            for _ in 0..3 {
+                let top = s.points.iter().map(|q| q.z).fold(f32::MIN, f32::max);
+                if top <= h {
+                    break;
+                }
+                len *= (h - tip.z) / (top - tip.z) * 0.999;
+                s = cx.grow(0, tip, frame, len, rl, Some(0), 1.0, idx, 1.0);
+            }
+            stems.push(s);
+        }
+    }
 
     let mut lmax = [l0; 4];
     lmax[1] = l0 * p.level[1].length * k_len;
@@ -167,10 +205,19 @@ pub fn skeleton(p: &TreeParams, target: Target, seed: u64) -> Skeleton {
 
     let mut parent = 0;
     while parent < stems.len() {
-        let (n, dead, lp_len, rp) = {
+        let (n, dead, lp_len, rp, z_a, z_b, is_trunk) = {
             let s = &stems[parent];
-            (s.level as usize + 1, s.dead, stem_length(s), s.radii[0])
+            (
+                s.level as usize + 1,
+                s.dead,
+                stem_length(s),
+                s.radii[0],
+                s.points[0].z,
+                s.points.last().unwrap().z,
+                s.parent.is_none(),
+            )
         };
+        let zspan = (z_b - z_a).max(1e-3);
         let pi = parent;
         parent += 1;
         if n >= p.levels as usize || dead {
@@ -178,13 +225,19 @@ pub fn skeleton(p: &TreeParams, target: Target, seed: u64) -> Skeleton {
         }
         let lp = p.level[n];
         let count = if n == 1 {
-            lp.branches
+            let k = lp.branches as f32 * zspan / h;
+            (if is_trunk {
+                k
+            } else {
+                k / (forks.max(1) as f32).sqrt()
+            })
+            .round() as u32
         } else {
             (lp.branches as f32 * (0.2 + 0.8 * (lp_len / lmax[n - 1]).clamp(0.0, 1.0))).round()
                 as u32
         };
         let s0 = if n == 1 {
-            (p.base_size / p.level[0].length).clamp(0.0, 0.95)
+            ((zb - z_a) / zspan).clamp(0.0, 0.95)
         } else {
             0.0
         };
@@ -210,21 +263,20 @@ pub fn skeleton(p: &TreeParams, target: Target, seed: u64) -> Skeleton {
             };
             let len_f = lp.length + r.signed() * lp.length_v;
             let offset = t * lp_len;
+            let (pos, frame_p, rad_p) = sample(&stems[pi], t);
             let mut len = if n == 1 {
-                let rr = if l0 - zb < 1e-3 {
-                    1.0
-                } else {
-                    (l0 - offset) / (l0 - zb)
-                };
+                let rr = ((h - pos.z) / (h - zb).max(1e-3)).clamp(0.0, 1.0);
                 l0 * len_f * shape_ratio(p.shape, rr) * k_len
             } else {
                 len_f * (lp_len - 0.6 * offset)
             };
-            let is_dead = n == 1 && t < s0 + 0.3 * (1.0 - s0) && r.unit() < p.dead_branches;
+            let is_dead = n == 1 && {
+                let d = r.unit();
+                pos.z < zb + 0.3 * (h - zb) && d < p.dead_branches
+            };
             if is_dead {
                 len *= 0.4;
             }
-            let (pos, frame_p, rad_p) = sample(&stems[pi], t);
             let cap = 0.9 * rad_p;
             let rad = if cap < MIN_RADIUS {
                 MIN_RADIUS
@@ -237,7 +289,7 @@ pub fn skeleton(p: &TreeParams, target: Target, seed: u64) -> Skeleton {
             let idx = stems.len();
             let mut found = None;
             for _ in 0..6 {
-                let stem = cx.grow(n, pos, frame, len, rad, Some(pi as u32), t, idx);
+                let stem = cx.grow(n, pos, frame, len, rad, Some(pi as u32), t, idx, 1.0);
                 if stem.points[1..].iter().all(|&q| inside(q)) {
                     found = Some(stem);
                     break;
@@ -320,8 +372,15 @@ mod tests {
                             );
                         }
                     }
-                    let tip = sk.stems[0].points.last().unwrap().z;
-                    assert!((0.9 * height..=1.0001 * height).contains(&tip), "tip {tip}");
+                    let l0 = || sk.stems.iter().filter(|s| s.level == 0);
+                    for v in l0().flat_map(|s| &s.points) {
+                        assert!(v.z <= height + 1e-3, "level-0 z {} > {height}", v.z);
+                    }
+                    let top = l0()
+                        .flat_map(|s| &s.points)
+                        .map(|v| v.z)
+                        .fold(f32::MIN, f32::max);
+                    assert!((0.9 * height..=1.0001 * height).contains(&top), "top {top}");
                 }
             }
         }
@@ -339,6 +398,9 @@ mod tests {
                 match s.parent {
                     None => assert_eq!(i, 0),
                     Some(pi) => {
+                        if s.level == 0 {
+                            assert_eq!(pi, 0);
+                        }
                         assert!((pi as usize) < i);
                         let (_, _, rad) = sample(&sk.stems[pi as usize], s.parent_t);
                         assert!(s.radii[0] <= rad + 1e-6);
@@ -363,6 +425,50 @@ mod tests {
                 1
             ) >= 30
         );
+    }
+
+    #[test]
+    fn forks_make_leaders() {
+        let [b, c] = both();
+        for seed in 0..8 {
+            let sk = skeleton(&b, T, seed);
+            let l0: Vec<_> = sk.stems.iter().filter(|s| s.level == 0).collect();
+            assert_eq!(l0.len(), 4);
+            let t = &sk.stems[0];
+            for l in &l0[1..] {
+                assert_eq!(l.points[0], *t.points.last().unwrap());
+                assert!(l.radii[0] < t.radii.last().unwrap() + 1e-6);
+            }
+            assert!(*t.radii.last().unwrap() >= 0.4 * t.radii[0]);
+            let sc = skeleton(&c, T, seed);
+            assert_eq!(sc.stems.iter().filter(|s| s.level == 0).count(), 1);
+        }
+    }
+
+    #[test]
+    fn leaders_stay_narrow() {
+        let [b, _] = both();
+        let (height, width) = (8.0, 3.0);
+        for seed in 0..8 {
+            let sk = skeleton(&b, Target { height, width }, seed);
+            let lim = 0.35 * width
+                + height * b.trunk_lean.to_radians().sin()
+                + (height - b.fork_height * height) * b.level[0].curve_v.to_radians().sin()
+                + 1e-3;
+            for v in sk
+                .stems
+                .iter()
+                .filter(|s| s.level == 0)
+                .flat_map(|s| &s.points)
+            {
+                assert!(
+                    v.truncate().length() <= lim,
+                    "seed {seed} {} > {lim} tip {:?}",
+                    v.truncate().length(),
+                    sk.stems[0].points.last()
+                );
+            }
+        }
     }
 
     #[test]
