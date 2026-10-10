@@ -34,6 +34,31 @@ pub fn unit(seed: u64, stream: u64) -> f32 {
     (splitmix64(seed ^ stream.wrapping_mul(0x9E37_79B9_7F4A_7C15)) >> 40) as f32 / 16_777_216.0
 }
 
+/// Deterministic stream of numbers: splitmix64 over a counter.
+#[derive(Clone, Debug)]
+pub struct Rng(u64);
+
+impl Rng {
+    pub fn new(seed: u64) -> Rng {
+        Rng(seed)
+    }
+
+    pub fn next_u64(&mut self) -> u64 {
+        self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        splitmix64(self.0)
+    }
+
+    /// In [0, 1).
+    pub fn unit(&mut self) -> f32 {
+        (self.next_u64() >> 40) as f32 / 16_777_216.0
+    }
+
+    /// In [-1, 1).
+    pub fn signed(&mut self) -> f32 {
+        self.unit() * 2.0 - 1.0
+    }
+}
+
 /// The small differences between two trees of one kind.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Variation {
@@ -48,7 +73,11 @@ pub struct Variation {
 /// `variants`: how many model variants the archetype has (0 = none).
 pub fn variation(seed: u64, variants: u32) -> Variation {
     Variation {
-        variant: if variants == 0 { 0 } else { ((unit(seed, 1) as f64 * variants as f64) as u32).min(variants - 1) },
+        variant: if variants == 0 {
+            0
+        } else {
+            ((unit(seed, 1) as f64 * variants as f64) as u32).min(variants - 1)
+        },
         yaw: unit(seed, 2) * TAU,
         scale: 0.94 + 0.12 * unit(seed, 3),
         hue_deg: -4.0 + 8.0 * unit(seed, 4),
@@ -67,7 +96,10 @@ mod tests {
 
     #[test]
     fn same_cell_same_seed() {
-        assert_eq!(seed(5716, (0, 0), P), seed(5716, (0, 0), [295.84, 213.61, 0.04]));
+        assert_eq!(
+            seed(5716, (0, 0), P),
+            seed(5716, (0, 0), [295.84, 213.61, 0.04])
+        );
     }
 
     #[test]
@@ -107,6 +139,18 @@ mod tests {
         }
         for c in h {
             assert!((9_400..=10_600).contains(&c), "{h:?}");
+        }
+    }
+
+    #[test]
+    fn rng_is_a_fixed_stream() {
+        const G: u64 = 0x9E37_79B9_7F4A_7C15;
+        let mut r = Rng::new(1);
+        for k in 1..=3u64 {
+            assert_eq!(
+                r.next_u64(),
+                splitmix64(1u64.wrapping_add(G.wrapping_mul(k)))
+            );
         }
     }
 

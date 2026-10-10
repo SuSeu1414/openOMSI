@@ -3,7 +3,8 @@ name = "omsi-vegetation"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Vegetation: classification of map trees, seeds (pure data, no GPU)"
+description = "Vegetation: classification of map trees, seeds, procedural tree generation (pure data, no GPU)"
 
 [dependencies]
 omsi-cfg = { path = "../omsi-cfg" }
+glam.workspace = true

@@ -3619,6 +3619,7 @@ dependencies = [
 name = "omsi-vegetation"
 version = "0.1.0"
 dependencies = [
+ "glam",
  "omsi-cfg",
 ]
 
