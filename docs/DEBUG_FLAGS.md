@@ -302,6 +302,7 @@ effect. On Android, `openOMSI/env.txt` holds `NAME=value` lines that are set bef
 | `OMSI_TEXTURE_RAIN` | bool | off | use | app | OMSI 2's own texture rain on the glass instead of the drops. |
 | `OMSI_TRACKIR_NATIVE` | text | on | use | app | 0 turns the native TrackIR interface off. |
 | `OMSI_TRAFFIC_ALL_GROUPS` | bool | off | use | app | Let restricted AI groups (aircraft, depot fleets) drive everywhere. |
+| `OMSI_TREES_GENERATE` | bool | off | use | app | Generate the shared tree variants of streamed tiles on the background pool and cache them in ~/.openomsi/cache/vegetation (not drawn yet). |
 | `OMSI_TYRE_SUSPENSION` | bool | off | once | sim | The old suspension with wheel mass, tyre and bump stops (A/B). |
 
 ## Tuning

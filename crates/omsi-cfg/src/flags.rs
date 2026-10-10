@@ -442,6 +442,7 @@ flags! {
     OMSI_TRACKIR_NATIVE: Text, Switch, Use, "on", "0 turns the native TrackIR interface off.";
     OMSI_TRAFFIC_ALL_GROUPS: Bool, Switch, Use, "off", "Let restricted AI groups (aircraft, depot fleets) drive everywhere.";
     OMSI_TRAFFIC_STATS: Text, Debug, Use, "-", "CSV: the traffic's flow every minute (standing cars, waits-for cycles, junction entries, red runs, overlaps), a summary at the end.";
+    OMSI_TREES_GENERATE: Bool, Switch, Use, "off", "Generate the shared tree variants of streamed tiles on the background pool and cache them in ~/.openomsi/cache/vegetation (not drawn yet).";
     OMSI_TRIGGER_ALL: Bool, Test, Use, "off", "Check: fire every [mouseevent] of the model and compare the variables before and after.";
     OMSI_TYRE_SUSPENSION: Bool, Switch, Once, "off", "The old suspension with wheel mass, tyre and bump stops (A/B).";
     OMSI_UI_PREVIEW: Text, Test, Use, "target/ui-preview.png", "Plugin UI preview test: the picture's path.";

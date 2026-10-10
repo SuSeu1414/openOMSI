@@ -1,12 +1,39 @@
-//! Tree and plant classes for the `OMSI_DEBUG_TREES` log (nothing is drawn differently).
+//! Tree and plant classes for the `OMSI_DEBUG_TREES` log (nothing is drawn differently), and
+//! under `OMSI_TREES_GENERATE` the shared tree variants, generated on the background pool.
 use super::*;
 use omsi_vegetation::classify::{Archetype, Class, Signals};
+use omsi_vegetation::cache::{self, VariantKey};
+use omsi_vegetation::generator::{Lod, TreeMesh};
 use omsi_vegetation::overrides::{classify_with, Overrides};
+use std::path::Path;
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::OnceLock;
+
+// (read by the renderer in PR9; only the tests read the meshes for now)
+#[allow(dead_code)]
+pub(crate) enum VariantSlot {
+    Pending,
+    Ready(Arc<TreeMesh>),
+    Missing,
+}
+
+#[derive(Default)]
+pub(crate) struct VariantStats {
+    pub generated: AtomicU32,
+    pub loaded: AtomicU32,
+    /// sum of job wall time in microseconds (generate or load, including the store)
+    pub job_us: AtomicU64,
+    pub max_job_us: AtomicU64,
+}
 
 #[derive(Default)]
 pub(crate) struct Vegetation {
-    overrides: std::sync::OnceLock<Overrides>,
+    overrides: OnceLock<Overrides>,
     classes: Mutex<HashMap<(String, String), Class>>,
+    variants: Arc<Mutex<HashMap<VariantKey, VariantSlot>>>,
+    pub(crate) variant_stats: Arc<VariantStats>,
+    /// None = the disk cache is off (no home dir); set once, tests set it to None.
+    cache_root: OnceLock<Option<PathBuf>>,
 }
 
 impl Vegetation {
@@ -33,6 +60,80 @@ impl Vegetation {
             log::info!("trees: {} override rules from {} files", o.rules.len(), files.len());
             o
         })
+    }
+
+    /// `$HOME` or `$USERPROFILE` + `.openomsi/cache/vegetation`; None if neither is set.
+    fn cache_root(&self) -> Option<&Path> {
+        self.cache_root
+            .get_or_init(|| {
+                let home = ["HOME", "USERPROFILE"].iter().find_map(|v| std::env::var_os(v).filter(|h| Path::new(h).is_absolute()))?;
+                Some(PathBuf::from(home).join(".openomsi").join("cache").join("vegetation"))
+            })
+            .as_deref()
+    }
+
+    /// Ask for L0, L1 and L2 of `instance_seed`'s variant of `archetype`; each key not yet in
+    /// the map gets one job on the background pool. Returns the variant index.
+    pub(crate) fn request_variants(&self, archetype: Archetype, instance_seed: u64) -> u32 {
+        let v = cache::variant_of(instance_seed);
+        let mut to_spawn = Vec::new();
+        {
+            let mut map = self.variants.lock();
+            for lod in [Lod::L0, Lod::L1, Lod::L2] {
+                let k = VariantKey { archetype, variant: v, lod };
+                if !map.contains_key(&k) {
+                    map.insert(k, VariantSlot::Pending);
+                    to_spawn.push(k);
+                }
+            }
+        }
+        if to_spawn.is_empty() {
+            return v;
+        }
+        let root = self.cache_root().map(Path::to_path_buf);
+        for k in to_spawn {
+            let (variants, stats, root) = (self.variants.clone(), self.variant_stats.clone(), root.clone());
+            crate::threads::background_pool().spawn(move || {
+                let t0 = std::time::Instant::now();
+                // (a panic in a pool job aborts the process: it ends as a Missing slot instead)
+                let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| cache::get_or_generate(root.as_deref(), k)));
+                let us = t0.elapsed().as_micros() as u64;
+                stats.job_us.fetch_add(us, Ordering::Relaxed);
+                stats.max_job_us.fetch_max(us, Ordering::Relaxed);
+                let slot = match r {
+                    Err(_) => {
+                        log::warn!("trees: variant {:?}-{}-{:?} failed: generator panicked", k.archetype, k.variant, k.lod);
+                        VariantSlot::Missing
+                    }
+                    Ok(Some((m, from_disk))) => {
+                        let n = if from_disk { &stats.loaded } else { &stats.generated };
+                        n.fetch_add(1, Ordering::Relaxed);
+                        log::debug!(
+                            "trees: variant {:?}-{}-{:?} {} in {:.1} ms ({} triangles)",
+                            k.archetype,
+                            k.variant,
+                            k.lod,
+                            if from_disk { "loaded" } else { "generated" },
+                            us as f64 / 1000.0,
+                            m.triangles()
+                        );
+                        VariantSlot::Ready(Arc::new(m))
+                    }
+                    Ok(None) => VariantSlot::Missing,
+                };
+                variants.lock().insert(k, slot);
+            });
+        }
+        v
+    }
+
+    /// The mesh if Ready.
+    #[allow(dead_code)]
+    pub(crate) fn variant(&self, key: VariantKey) -> Option<Arc<TreeMesh>> {
+        match self.variants.lock().get(&key) {
+            Some(VariantSlot::Ready(m)) => Some(m.clone()),
+            _ => None,
+        }
     }
 
     /// Class of a placed `[tree]`: `texture` = the label texture (before the season look),
@@ -78,5 +179,48 @@ impl Vegetation {
             );
         }
         c
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    fn keys(a: Archetype, v: u32) -> [VariantKey; 3] {
+        [Lod::L0, Lod::L1, Lod::L2].map(|lod| VariantKey { archetype: a, variant: v, lod })
+    }
+
+    fn wait(limit: Duration, f: impl Fn() -> bool) {
+        let t = Instant::now();
+        while !f() && t.elapsed() < limit {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    #[test]
+    fn request_generates_three_lods_once() {
+        let v = Vegetation::default();
+        v.cache_root.set(None).unwrap();
+        let i = v.request_variants(Archetype::Shrub, 12345);
+        assert_eq!(v.request_variants(Archetype::Shrub, 12345), i);
+        assert_eq!(v.variants.lock().len(), 3);
+        let k = keys(Archetype::Shrub, i);
+        wait(Duration::from_secs(60), || k.iter().all(|k| v.variant(*k).is_some()));
+        let m: Vec<_> = k.iter().map(|k| v.variant(*k).expect("variant ready")).collect();
+        assert_eq!(v.variant_stats.generated.load(Ordering::Relaxed), 3);
+        assert_eq!(v.variant_stats.loaded.load(Ordering::Relaxed), 0);
+        assert!(m[0].triangles() >= m[2].triangles());
+    }
+
+    #[test]
+    fn none_archetype_ends_missing() {
+        let v = Vegetation::default();
+        v.cache_root.set(None).unwrap();
+        let i = v.request_variants(Archetype::None, 1);
+        let missing = || keys(Archetype::None, i).iter().all(|k| matches!(v.variants.lock().get(k), Some(VariantSlot::Missing)));
+        wait(Duration::from_secs(10), missing);
+        assert!(missing());
+        assert!(keys(Archetype::None, i).iter().all(|k| v.variant(*k).is_none()));
     }
 }
