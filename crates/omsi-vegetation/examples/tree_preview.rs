@@ -1,12 +1,14 @@
 //! Developer tool: renders generated trees (front, side, top) to a PNG with a CPU rasteriser.
 //!
 //! `tree_preview <archetype> <height> <width> <out.png> [--seeds N] [--seed0 S]
-//!  [--lod 0|1|2] [--size PX] [--no-leaves] [--ao]`
+//!  [--lod 0|1|2] [--size PX] [--no-leaves] [--ao]
+//!  [--season spring|summer|autumn|winter]`
 
 use glam::{Vec2, Vec3};
 use omsi_vegetation::classify::Archetype;
 use omsi_vegetation::generator::{generate, skeleton, Lod, Target};
 use omsi_vegetation::presets::preset;
+use omsi_vegetation::tex::palette::{card_visible, gradient_key, leaf_colour, palette, Season};
 
 const BG: [u8; 3] = [205, 214, 224];
 const BARK: [f32; 3] = [110.0, 80.0, 55.0];
@@ -38,7 +40,8 @@ fn usage(msg: &str) -> ! {
     eprintln!("error: {msg}");
     eprintln!(
         "usage: tree_preview <archetype> <height> <width> <out.png> [--seeds N] [--seed0 S] \
-         [--lod 0|1|2] [--size PX] [--no-leaves] [--ao]"
+         [--lod 0|1|2] [--size PX] [--no-leaves] [--ao] \
+         [--season spring|summer|autumn|winter]"
     );
     std::process::exit(2);
 }
@@ -71,6 +74,7 @@ fn main() {
         .iter()
         .filter(|a| *a != "--no-leaves" && *a != "--ao")
         .collect();
+    let mut season: Option<Season> = None;
     let mut it = rest.into_iter();
     while let Some(k) = it.next() {
         let v = it
@@ -81,6 +85,15 @@ fn main() {
             "--seed0" => seed0 = num(v, "--seed0"),
             "--lod" => lod = num(v, "--lod"),
             "--size" => size = num(v, "--size"),
+            "--season" => {
+                season = Some(match v.as_str() {
+                    "spring" => Season::Spring,
+                    "summer" => Season::Summer,
+                    "autumn" => Season::Autumn,
+                    "winter" => Season::Winter,
+                    _ => usage(&format!("bad --season: {v}")),
+                })
+            }
             _ => usage(&format!("unknown option: {k}")),
         }
     }
@@ -100,6 +113,7 @@ fn main() {
         w: 3 * size,
         img: vec![BG; 3 * size * seeds as usize * size],
     };
+    let pal = season.and_then(|s| palette(arch, s));
     let light = Vec3::new(-0.4, -0.6, 0.7).normalize();
 
     for j in 0..seeds {
@@ -145,9 +159,19 @@ fn main() {
                 Vec3::new(origin.x + h * scale, origin.y - u * scale, d)
             };
             let mut depth = vec![f32::MAX; size * size];
-            for (m, base) in [(&mesh, BARK), (&leaf, LEAF)] {
+            for (m, base, is_leaf) in [(&mesh, BARK, false), (&leaf, LEAF, true)] {
                 for t in m.indices.as_chunks::<3>().0 {
                     let w = t.map(|i| m.positions[i as usize]);
+                    let mut base = base;
+                    if let (true, Some(pal)) = (is_leaf, &pal) {
+                        let at = &m.attrs[t[0] as usize];
+                        if !card_visible(pal, at.rand) {
+                            continue;
+                        }
+                        let z = (w[0].z + w[1].z + w[2].z) / 3.0;
+                        let key = gradient_key(at.rand, at.phase, (z / height).clamp(0.0, 1.0));
+                        base = leaf_colour(pal, key).map(|c| c.powf(1.0 / 2.2) * 255.0);
+                    }
                     let n = (w[1] - w[0]).cross(w[2] - w[0]).normalize_or_zero();
                     let mut k = 0.25 + 0.75 * n.dot(light).abs();
                     if ao {

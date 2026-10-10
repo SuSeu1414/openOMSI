@@ -2,12 +2,16 @@
 //!
 //! `tex_preview bark <out.png> [--size 512]`
 //! `tex_preview leaves <out.png> [--size 1024] [--arch <Name>]`
+//! `tex_preview seasons <out.png> [--size 512]`
 
 use glam::{Vec2, Vec3};
 use omsi_vegetation::classify::Archetype;
 use omsi_vegetation::generator::leaves::HULL;
 use omsi_vegetation::tex::bark::{bark, BarkTextures};
-use omsi_vegetation::tex::leaves::{atlas_uv, leaf_ref, leaves, LeafTextures, TILES};
+use omsi_vegetation::tex::leaves::{atlas_uv, leaf_ref, leaves, LeafTextures, DENSE_TILE, TILES};
+use omsi_vegetation::tex::palette::{
+    card_visible, gradient_key, leaf_colour, palette, recolour, SEASONS,
+};
 use std::time::Instant;
 
 const C: usize = 256;
@@ -30,6 +34,7 @@ fn usage(msg: &str) -> ! {
     eprintln!("error: {msg}");
     eprintln!("usage: tex_preview bark <out.png> [--size 512]");
     eprintln!("       tex_preview leaves <out.png> [--size 1024] [--arch <Name>]");
+    eprintln!("       tex_preview seasons <out.png> [--size 512]");
     std::process::exit(2);
 }
 
@@ -318,11 +323,104 @@ fn run_leaves(args: &[String]) {
         .unwrap_or_else(|e| usage(&format!("cannot write {out}: {e}")));
 }
 
+/// Season sheet: one row per leaf archetype, one cell per season, each a 3x3 grid of the dense
+/// atlas tile recoloured like 9 cards spread over branches, rand and height.
+fn run_seasons(args: &[String]) {
+    let Some(out) = args.first() else {
+        usage("missing <out.png>");
+    };
+    let mut size = 512u32;
+    let mut it = args[1..].iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--size" => {
+                size = it
+                    .next()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or_else(|| usage("bad --size"));
+            }
+            _ => usage(&format!("unknown option: {a}")),
+        }
+    }
+    if size < 128 || !size.is_power_of_two() {
+        usage("--size must be a power of two >= 128");
+    }
+    let rows: Vec<Archetype> = ROWS
+        .iter()
+        .copied()
+        .filter(|a| leaf_ref(*a).is_some())
+        .collect();
+    let (w, h) = (4 * (LC + GAP) + GAP, rows.len() * (LC + GAP) + GAP);
+    let mut img = vec![128u8; w * h * 3];
+    let sky = [170u8, 200, 235];
+    let (n, g) = (size as usize, LC / 3);
+    let tile = n / TILES as usize;
+    let (tx, ty) = ((DENSE_TILE % TILES) as usize, (DENSE_TILE / TILES) as usize);
+    for (r, a) in rows.iter().enumerate() {
+        println!("row {r}: {a:?}");
+        let t = leaves(*a, size).expect("leaf archetype");
+        let reference = leaf_ref(*a).expect("leaf archetype");
+        let texel = |x: usize, y: usize| {
+            let i = ((ty * tile + y) * n + tx * tile + x) * 4;
+            let p = &t.albedo_alpha[i..i + 4];
+            ([p[0], p[1], p[2]], p[3], t.normal_rough_trans[i + 2])
+        };
+        for (c, s) in SEASONS.iter().enumerate() {
+            let pal = palette(*a, *s).expect("leaf archetype");
+            let (ox, oy) = (GAP + c * (LC + GAP), GAP + r * (LC + GAP));
+            for y in 0..LC {
+                for x in 0..LC {
+                    let o = ((oy + y) * w + ox + x) * 3;
+                    img[o..o + 3].copy_from_slice(&sky);
+                }
+            }
+            for j in 0..9usize {
+                let rand = (j as f32 * 0.37 + 0.11) % 1.0;
+                if !card_visible(&pal, rand) {
+                    continue;
+                }
+                let phase = (j / 3) as f32 / 2.0;
+                let height01 = 1.0 - (j % 3) as f32 / 2.0;
+                let target = leaf_colour(&pal, gradient_key(rand, phase, height01));
+                let (cx, cy) = ((j % 3) * g, (j / 3) * g);
+                for y in 0..g {
+                    for x in 0..g {
+                        // Box filter over the source texels of this output pixel.
+                        let (x0, y0) = (x * tile / g, y * tile / g);
+                        let (x1, y1) = (
+                            ((x + 1) * tile / g).max(x0 + 1),
+                            ((y + 1) * tile / g).max(y0 + 1),
+                        );
+                        let (mut acc, mut al, mut cnt) = ([0.0f32; 3], 0.0f32, 0.0f32);
+                        for (sx, sy) in (y0..y1).flat_map(|sy| (x0..x1).map(move |sx| (sx, sy))) {
+                            let (alb, a8, tr) = texel(sx, sy);
+                            let col = recolour(alb, reference, target, tr);
+                            let a = a8 as f32 / 255.0;
+                            (0..3).for_each(|i| acc[i] += col[i] as f32 * a);
+                            al += a;
+                            cnt += 1.0;
+                        }
+                        let cov = al / cnt;
+                        let o = ((oy + cy + y) * w + ox + cx + x) * 3;
+                        for i in 0..3 {
+                            let fg = if al > 0.0 { acc[i] / al } else { 0.0 };
+                            img[o + i] = (fg * cov + sky[i] as f32 * (1.0 - cov)).round() as u8;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    image::save_buffer(out, &img, w as u32, h as u32, image::ColorType::Rgb8)
+        .unwrap_or_else(|e| usage(&format!("cannot write {out}: {e}")));
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("bark") => run_bark(&args[1..]),
         Some("leaves") => run_leaves(&args[1..]),
+        Some("seasons") => run_seasons(&args[1..]),
         Some(other) => usage(&format!("unknown subcommand: {other}")),
         None => usage("missing subcommand"),
     }

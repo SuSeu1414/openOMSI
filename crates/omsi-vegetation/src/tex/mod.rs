@@ -8,6 +8,7 @@ pub mod leaves;
 mod needles;
 pub mod noise;
 pub mod ops;
+pub mod palette;
 
 /// A square scalar field, row-major, top-left origin (row = +y = texture v going down).
 #[derive(Clone, Debug, PartialEq)]

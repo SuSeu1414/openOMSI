@@ -148,7 +148,7 @@ fn style(a: Archetype) -> Option<Style> {
     }
 }
 
-/// The summer reference colour of the leaf top (sRGB) — the palette's `ref` in 024.
+/// The summer reference colour of the leaf top or needle (sRGB) — the palette's `ref` in 024.
 pub fn leaf_ref(a: Archetype) -> Option<[u8; 3]> {
     style(a)
         .map(|s| s.leaf)
